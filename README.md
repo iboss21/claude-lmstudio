@@ -93,8 +93,11 @@ On the CLI the equivalents are leaving `ENABLE_TOOL_SEARCH` unset, or setting
 
 ### What that does not fix
 
-- **A session that is already wedged.** The rejected block is in the conversation
-  history and replays on every retry.
+- **A session that is already wedged.** The Messages API is stateless — every turn
+  re-posts the whole conversation, so a block written into the transcript is replayed
+  forever. Turning tool search off stops *new* blocks being written; it cannot remove
+  one already there. Either start a fresh conversation, or put the proxy in front,
+  which rewrites the entire history on every request.
 - **Images in `tool_result`.** Screenshot tools are not tool search, and no client
   setting stops them.
 - **`count_tokens`.** Still answered by LM Studio with a bogus `200`.
@@ -334,7 +337,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 77 tests, no network, no LM Studio required
+npm test          # 79 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

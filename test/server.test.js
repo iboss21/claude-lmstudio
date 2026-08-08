@@ -443,3 +443,76 @@ test('defer_loading stripping can be turned off to keep the beta pairing intact'
 
   assert.equal(seen[0].tools[0].defer_loading, true);
 });
+
+/**
+ * Build a long conversation with the poisoned ToolSearch result buried at `poisonAt`,
+ * mirroring the real 463-message transcript rather than a 3-message reduction.
+ */
+function longHistory(length, poisonAt) {
+  const messages = [];
+  // Strict user/assistant alternation, matching the captured transcript, which had
+  // zero consecutive same-role pairs. The poison pair must land as assistant then
+  // user or the proxy will (correctly) merge turns and change the indices.
+  const roleAt = (i) => (i % 2 === 0 ? 'user' : 'assistant');
+  if (roleAt(poisonAt - 1) !== 'assistant') {
+    throw new Error(`poisonAt ${poisonAt} does not land on a user turn`);
+  }
+
+  for (let i = 0; i < length; i++) {
+    if (i === poisonAt - 1) {
+      messages.push({
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'poison', name: 'ToolSearch', input: { query: 'select:Write,Edit,Grep,Bash' } }],
+      });
+      continue;
+    }
+    if (i === poisonAt) {
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'poison',
+            content: [
+              { type: 'tool_reference', tool_name: 'Write' },
+              { type: 'tool_reference', tool_name: 'Edit' },
+              { type: 'tool_reference', tool_name: 'Grep' },
+              { type: 'tool_reference', tool_name: 'Bash' },
+            ],
+          },
+          { type: 'text', text: 'Tool loaded.\n' },
+        ],
+      });
+      continue;
+    }
+    messages.push({ role: roleAt(i), content: [{ type: 'text', text: `turn ${i}` }] });
+  }
+  return { model: 'local-model', max_tokens: 100, messages };
+}
+
+test('a poisoned block buried deep in a 463-message history is repaired', async (t) => {
+  // The Anthropic Messages API is stateless: every turn re-posts the whole
+  // conversation, so a rejected block at index 461 is replayed forever. The proxy
+  // has to rewrite the entire array on every request, not just the tail.
+  const { proxyPort, seen } = await withStack(t);
+  const res = await post(proxyPort, '/v1/messages', longHistory(463, 462));
+
+  assert.equal(res.status, 200);
+  assert.equal(seen[0].messages.length, 463, 'no turns were lost repairing the block');
+  assert.equal(findIllegalToolResult(seen[0]), null);
+  assert.deepEqual(seen[0].messages[462].content[0].content, [
+    { type: 'text', text: 'Tools loaded: Write, Edit, Grep, Bash' },
+  ]);
+});
+
+test('the same history keeps working as the conversation grows past it', async (t) => {
+  const { proxyPort, seen } = await withStack(t);
+
+  for (const length of [463, 465, 467]) {
+    const res = await post(proxyPort, '/v1/messages', longHistory(length, 462));
+    assert.equal(res.status, 200, `history of ${length} messages should succeed`);
+  }
+
+  assert.equal(seen.length, 3);
+  for (const body of seen) assert.equal(findIllegalToolResult(body), null);
+});
