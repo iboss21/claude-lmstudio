@@ -7,6 +7,7 @@ import { pipeSse, isEventStream, startEarlyPing, writeSseError } from './stream.
 import { countRequestTokens, TokenCalibrator, totalInputTokens } from './tokenizer.js';
 import { repairFromError, extractErrorMessage, extractErrorType } from './repair.js';
 import { makeContextGuard } from './preload.js';
+import { normalizeMessageResponse } from './response.js';
 import { log, dump, configureLogger } from './logger.js';
 
 const MESSAGES_PATH = '/v1/messages';
@@ -140,6 +141,8 @@ export function createServer(config) {
           const { usage } = await pipeSse(upstream, res, {
             pingIntervalMs: config.pingIntervalMs,
             headersSent: committed,
+            guardEnvelope: config.guardEnvelope,
+            model: current.model,
           });
           const actual = totalInputTokens(usage);
           if (config.calibrate && actual > 0) {
@@ -153,7 +156,7 @@ export function createServer(config) {
           return;
         }
 
-        const buffered = await readAll(upstream);
+        let buffered = await readAll(upstream);
         if (early?.committed) {
           // We promised an event stream and upstream answered with something else.
           early.stop();
@@ -177,9 +180,25 @@ export function createServer(config) {
             // Non-JSON success body; nothing to calibrate against.
           }
         }
+        // Fill in any required response fields upstream omitted.
+        if (config.guardEnvelope) {
+          try {
+            const fixed = normalizeMessageResponse(JSON.parse(buffered.toString('utf8')), {
+              model: current.model,
+              tools: current.tools,
+            });
+            if (fixed) {
+              log.warn(`repaired response envelope: ${fixed.repairs.join(', ')}`);
+              buffered = Buffer.from(JSON.stringify(fixed.body), 'utf8');
+            }
+          } catch {
+            // Not JSON; forward untouched.
+          }
+        }
+
         res.writeHead(status, {
           ...Object.fromEntries(
-            Object.entries(upstream.headers).filter(([k]) => k !== 'transfer-encoding')
+            Object.entries(upstream.headers).filter(([k]) => k !== 'transfer-encoding' && k !== 'content-length')
           ),
           'content-length': buffered.length,
           ...extra,

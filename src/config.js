@@ -23,6 +23,8 @@ export const DEFAULTS = {
   hoistImages: true,
   sanitizeTools: true,
   stripDeferLoading: true,
+  // Complete a truncated response stream and fill in required response fields.
+  guardEnvelope: true,
   repairToolPairing: true,
   maxStringLength: DEFAULT_LIMITS.maxStringLength,
   maxNumber: DEFAULT_LIMITS.maxNumber,
@@ -65,6 +67,7 @@ const BOOLEAN = new Set([
   'hoistImages',
   'sanitizeTools',
   'stripDeferLoading',
+  'guardEnvelope',
   'repairToolPairing',
   'flashAttention',
 ]);
@@ -216,6 +219,7 @@ claude-lmstudio — compatibility proxy between Claude Code and LM Studio
     --no-sanitize-tools        Do not clamp oversized JSON-schema bounds
     --no-strip-defer-loading   Forward the defer_loading tool field unchanged
     --no-repair-tool-pairing   Do not synthesize missing tool_results
+    --no-guard-envelope        Do not complete a truncated response stream
     --system-messages <mode>   keep | user | hoist               (default keep)
     --strict-params            Forward only core Anthropic params
     --strip-cache-control      Remove cache_control from all blocks

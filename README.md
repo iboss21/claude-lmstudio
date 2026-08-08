@@ -212,6 +212,9 @@ curl http://localhost:2140/health
 | orphaned `tool_result` with no call | confuses the model | demotes it to text |
 | `POST /v1/messages/count_tokens` | **not implemented** | answered locally with a real `{"input_tokens": N}` |
 | streaming, minutes of silence during prompt processing | connection looks dead, client aborts at 300s | commits the stream after 20s of upstream silence and pings every 10s |
+| a response stream that stops early | Claude Code waits forever for `message_stop` | closes open blocks and completes the envelope |
+| a response missing `stop_reason` / `usage` / `id` | wrong accounting, unrecognized turn | filled in |
+| `tool_use.input` arriving as a JSON string | tool receives a string and rejects it | parsed into an object |
 
 Every transformation is a no-op when there is nothing to do, so a request that already
 validates passes through semantically unchanged. It is not *byte*-identical: the body
@@ -399,7 +402,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 107 tests, no network, no LM Studio required
+npm test          # 126 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

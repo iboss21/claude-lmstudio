@@ -1,4 +1,5 @@
 import { log } from './logger.js';
+import { createStreamGuard } from './response.js';
 
 /**
  * SSE relay.
@@ -60,6 +61,9 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
         tailBytes[n - 1] === 0x0a
       );
     };
+    // Watches the envelope so a stream that stops early can be completed rather than
+    // leaving Claude Code waiting for a message_stop that never comes.
+    const guard = opts.guardEnvelope === false ? null : createStreamGuard({ model: opts.model });
     let tail = '';
     let usage = null;
     let settled = false;
@@ -104,6 +108,7 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
 
     upstreamRes.on('data', (chunk) => {
       tailBytes = Buffer.concat([tailBytes, chunk]).subarray(-4);
+      guard?.observe(chunk);
       scanForUsage(chunk);
       const ok = clientRes.write(chunk);
       if (!ok) {
@@ -113,13 +118,23 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
     });
 
     upstreamRes.on('end', () => {
-      if (!clientRes.writableEnded) clientRes.end();
+      if (!clientRes.writableEnded) {
+        const trailer = guard?.close() ?? '';
+        if (trailer) {
+          log.warn(`completed a truncated response stream: ${guard.repairs.join('; ')}`);
+          clientRes.write(trailer);
+        }
+        clientRes.end();
+      }
       finish();
     });
 
     upstreamRes.on('error', (err) => {
       log.warn('upstream stream error:', err.message);
       if (!clientRes.writableEnded) {
+        // Close any open blocks first, so the error lands on a coherent envelope.
+        const trailer = guard?.close() ?? '';
+        if (trailer) clientRes.write(trailer);
         clientRes.write(
           `event: error\ndata: ${JSON.stringify({
             type: 'error',
