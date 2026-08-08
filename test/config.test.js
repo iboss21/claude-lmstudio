@@ -51,3 +51,16 @@ test('normalizer options carry the schema clamps through', () => {
   assert.equal(opts.limits.maxStringLength, 500);
   assert.equal(opts.coerceToolResults, true);
 });
+
+test('max_tokens is clamped only when a ceiling is configured', async () => {
+  const { normalizeRequest } = await import('../src/normalize/index.js');
+  const body = { model: 'local', max_tokens: 32_000, messages: [{ role: 'user', content: 'hi' }] };
+
+  assert.equal(normalizeRequest(body).body.max_tokens, 32_000);
+  assert.equal(normalizeRequest(body, { maxOutputTokens: 8_000 }).body.max_tokens, 8_000);
+  // A request already under the ceiling is left alone.
+  assert.equal(
+    normalizeRequest({ ...body, max_tokens: 4_000 }, { maxOutputTokens: 8_000 }).body.max_tokens,
+    4_000
+  );
+});

@@ -63,6 +63,29 @@ why it presents as a hang rather than a clean error.
 
 ---
 
+## Before you install anything: turn off tool search
+
+The `tool_reference` half of this bug is **self-inflicted and switchable**. Claude
+Code only emits those blocks when deferred tool loading is on, and on the desktop
+third-party-inference path it is **off by default**:
+
+- **Claude Code desktop (3P):** Developer → Configure Third-Party Inference → set
+  `toolSearchEnabled` to `false` (or remove the key). Note that on this entrypoint
+  `ENABLE_TOOL_SEARCH` is *ignored* — `toolSearchEnabled` is the only switch.
+- **Claude Code CLI:** leave `ENABLE_TOOL_SEARCH` unset. It already defaults to off
+  when `ANTHROPIC_BASE_URL` points somewhere non-first-party. Setting it to `true` is
+  what produces these blocks.
+- **CLI, bigger hammer:** `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` strips the
+  `anthropic-beta` headers and the beta tool-schema fields (`defer_loading`,
+  `eager_input_streaming`) and forces all tools upfront.
+
+That alone stops new sessions from breaking. It does **not** fix a session that is
+already wedged — the poisoned block is in the history and replays on every retry —
+and it does nothing for the `image`-in-`tool_result` case, the count_tokens gap, or
+the stream watchdogs. Those are what the proxy is for.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -139,6 +162,18 @@ official SDKs append) and **self-calibrates**: every completion returns a real
 average. The estimate converges on the loaded GGUF's actual tokenizer within a few
 turns. Watch it with `curl localhost:2140/health`.
 
+### Why the SSE pings matter
+
+On a custom base URL Claude Code runs two 300-second stream watchdogs that count raw
+bytes received — and **keep-alive pings count**. A local model ingesting a large agent
+context can go quiet for longer than that, and the watchdog aborts the request. Pings
+every 10s keep the byte counter moving.
+
+Timing works out because LM Studio opens the SSE response *before* it starts prompt
+processing (its log prints `Streaming response…` ahead of `Prompt processing
+progress: 0.0%`), so the proxy is already relaying a live stream during the silent
+window. If you still trip a watchdog, `--ping-interval 5000` tightens it.
+
 ### Self-healing
 
 The rules above cover what is known today. For anything else, the proxy reads the
@@ -176,6 +211,7 @@ the session. Turn it off with `--no-auto-repair`; see what it caught with
 --num-experts <n>          Active experts for MoE models
 --flash-attention          Enable flash attention
 --eval-batch-size <n>      Prompt batch size
+--max-output-tokens <n>    Clamp max_tokens (Claude Code sends 32000 by default)
 --api-token <token>        Bearer token for LM Studio's native REST API
 
 --ping-interval <ms>       SSE keepalive interval, 0 disables (default 10000)
@@ -255,7 +291,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 74 tests, no network, no LM Studio required
+npm test          # 75 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

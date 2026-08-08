@@ -79,5 +79,13 @@ export function normalizeParams(body, opts = {}, stats = {}) {
     stats.maxTokensDefaulted = true;
   }
 
+  // Claude Code defaults max_tokens to 32000 for any model ID it does not recognize,
+  // which every local GGUF name is. llama.cpp reserves that much of the context window
+  // for output, so on a 32k-context model it can leave almost nothing for the prompt.
+  if (opts.maxOutputTokens && typeof out.max_tokens === 'number' && out.max_tokens > opts.maxOutputTokens) {
+    stats.maxTokensClamped = out.max_tokens;
+    out = { ...out, max_tokens: opts.maxOutputTokens };
+  }
+
   return out;
 }

@@ -30,6 +30,8 @@ export const DEFAULTS = {
   numExperts: null,
   evalBatchSize: null,
   apiToken: null,
+  // Clamp Claude Code's 32000 default for unrecognized model IDs.
+  maxOutputTokens: null,
 };
 
 /** Ports LM Studio is commonly served on, probed when the configured upstream is down. */
@@ -46,6 +48,7 @@ const NUMERIC = new Set([
   'contextLength',
   'numExperts',
   'evalBatchSize',
+  'maxOutputTokens',
 ]);
 
 const BOOLEAN = new Set([
@@ -156,6 +159,7 @@ export function normalizerOptions(config) {
     mergeAdjacent: true,
     dropEmpty: true,
     stripCacheControl: config.stripCacheControl,
+    maxOutputTokens: config.maxOutputTokens,
     strictParams: config.strictParams,
     limits: {
       maxStringLength: config.maxStringLength,
@@ -199,6 +203,7 @@ claude-lmstudio — compatibility proxy between Claude Code and LM Studio
     --num-experts <n>          Active experts for MoE models
     --flash-attention          Enable flash attention
     --eval-batch-size <n>      Prompt batch size
+    --max-output-tokens <n>    Clamp max_tokens (Claude Code sends 32000 by default)
     --api-token <token>        Bearer token for LM Studio's native REST API
 
   Diagnostics
