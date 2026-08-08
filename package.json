@@ -1,0 +1,41 @@
+{
+  "name": "claude-lmstudio",
+  "version": "1.0.0",
+  "description": "Compatibility proxy that lets Claude Code talk to LM Studio's Anthropic-compatible /v1/messages endpoint without 400s, stalls, or grammar blowups.",
+  "type": "module",
+  "bin": {
+    "claude-lmstudio": "bin/claude-lmstudio.js"
+  },
+  "main": "src/server.js",
+  "exports": {
+    ".": "./src/server.js",
+    "./normalize": "./src/normalize/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/claude-lmstudio.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "claude-code",
+    "lmstudio",
+    "anthropic",
+    "proxy",
+    "llm-gateway",
+    "local-llm",
+    "gguf"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iboss21/claude-lmstudio.git"
+  }
+}
