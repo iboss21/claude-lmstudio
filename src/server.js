@@ -6,6 +6,7 @@ import { sendUpstream, readAll, forwardableHeaders } from './upstream.js';
 import { pipeSse, isEventStream } from './stream.js';
 import { countRequestTokens, TokenCalibrator } from './tokenizer.js';
 import { repairFromError, extractErrorMessage } from './repair.js';
+import { makeContextGuard } from './preload.js';
 import { log, dump, configureLogger } from './logger.js';
 
 const MESSAGES_PATH = '/v1/messages';
@@ -52,6 +53,8 @@ export function createServer(config) {
     charsPerToken: config.charsPerToken,
     calibration: config.calibrate ? calibrator.value : 1,
   });
+
+  const guardContext = makeContextGuard(config.contextLength);
 
   /**
    * POST /v1/messages — normalize, forward, and retry through upstream validation
@@ -220,6 +223,7 @@ export function createServer(config) {
 
     const input_tokens = countRequestTokens(parsed, tokenOpts());
     log.debug(`count_tokens -> ${input_tokens} (factor ${calibrator.value.toFixed(3)})`);
+    guardContext(input_tokens);
     sendJson(res, 200, { input_tokens });
   }
 

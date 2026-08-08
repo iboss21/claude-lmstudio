@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 
 import { resolveConfig, HELP } from '../src/config.js';
 import { createServer, probeUpstream } from '../src/server.js';
+import { preloadModel } from '../src/preload.js';
 import { log } from '../src/logger.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +46,7 @@ server.listen(config.port, config.host, async () => {
   const probe = await probeUpstream(config);
   if (probe.ok) {
     log.info('upstream reachable');
+    await preloadModel(config);
   } else if (probe.suggestion) {
     log.warn(
       `no LM Studio server answered at ${config.upstream}, but one is running at ${probe.suggestion} — ` +

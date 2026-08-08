@@ -171,6 +171,13 @@ the session. Turn it off with `--no-auto-repair`; see what it caught with
 --chars-per-token <n>      Estimator ratio                   (default 3.5)
 --no-calibrate             Do not calibrate against real usage counts
 
+--preload <model>          Load this model before the first request
+--context-length <n>       Context window to load it with (Claude Code needs 25k+)
+--num-experts <n>          Active experts for MoE models
+--flash-attention          Enable flash attention
+--eval-batch-size <n>      Prompt batch size
+--api-token <token>        Bearer token for LM Studio's native REST API
+
 --ping-interval <ms>       SSE keepalive interval, 0 disables (default 10000)
 --log-level <level>        silent | error | warn | info | debug
 --dump-dir <path>          Write failing requests here for inspection
@@ -183,6 +190,48 @@ Equivalent env vars: `CLAUDE_LMSTUDIO_UPSTREAM`, `CLAUDE_LMSTUDIO_PORT`,
 
 ---
 
+## Pre-warming the model
+
+`/v1/messages` cannot set context length per request — it is a **load-time** property,
+and LM Studio's default dropped to 8k in 0.4.16 Build 2 while a Claude Code session
+needs well over 25k. Separately, JIT loading means the first request after an idle
+period pays a full model load, which looks exactly like a timeout.
+
+The proxy can load the model up front through LM Studio's native REST API:
+
+```bash
+node bin/claude-lmstudio.js \
+  --preload regescore-1.0-35b \
+  --context-length 32000 \
+  --num-experts 4 \
+  --flash-attention
+```
+
+It reports the context length LM Studio actually applied, warns if it is below 25k,
+and warns again if a request's estimated size approaches the window — the failure
+mode otherwise is silent truncation, which reads as the model ignoring instructions.
+A failed preload is logged, never fatal.
+
+---
+
+## Why not LM Studio's native `/api/v1/chat`?
+
+It looks like a cleaner target — it takes `context_length` per request and reports
+real `stats.input_tokens`. It cannot work for Claude Code:
+
+- **No client-supplied tool definitions.** `/api/v1/chat` only exposes tools via
+  installed plugins and ephemeral MCP servers. Claude Code defines its own ~30 tools
+  per request, and there is no field to put them in.
+- **No conversation array.** `input` is a string or a flat list of text/image parts,
+  with history threaded by `previous_response_id`. There is nowhere to replay an
+  assistant turn carrying `tool_use`, or a user turn carrying `tool_result`.
+
+So `/v1/messages` remains the only viable upstream, and the proxy uses `/api/v1` only
+for model loading. LM Studio also documents **no tokenization endpoint at any prefix**,
+which is why `count_tokens` is estimated and calibrated rather than computed exactly.
+
+---
+
 ## Other things that break this setup
 
 The proxy fixes protocol mismatches. These are LM Studio settings, and it cannot fix
@@ -192,12 +241,10 @@ them for you — check them if you still see stalls or truncated replies:
   Build 2, and reported to break the Anthropic endpoint's agent loop for models with
   custom Jinja thinking templates — generation stops after ~50–60 tokens, which reads
   as a hang. If your model ships its own `<think>` template, try turning this **off**.
-- **Context length.** LM Studio's default dropped to 8k in 0.4.16 Build 2; Claude Code
-  needs well over 25k. It is a model **load-time** setting — `/v1/messages` cannot set
-  it per request, so raise it in the model's load config and reload.
-- **JIT loading + idle TTL.** On by default with a 60-minute TTL. The first request
-  after an idle period pays a full model load, which looks exactly like a timeout.
-  The proxy sets no upstream timeout, so it will wait — but Claude Code may not.
+- **Context length and JIT loading.** Both are covered by `--preload` above, but if
+  you would rather not use it: raise the model's context length in its load config
+  (8k default since 0.4.16 Build 2, and Claude Code needs 25k+), and load the model
+  before starting a session so the first request does not pay for it.
 - **Grammar compilation.** LM Studio 0.4.20 has an open regression where converting
   Claude Code's ~30 tool schemas to BNF crashes llama.cpp's parser
   (`failed to parse grammar`). `--sanitize-tools` (on by default) addresses the
@@ -208,7 +255,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 68 tests, no network, no LM Studio required
+npm test          # 74 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

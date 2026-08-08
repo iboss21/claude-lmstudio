@@ -23,6 +23,13 @@ export const DEFAULTS = {
   maxStringLength: DEFAULT_LIMITS.maxStringLength,
   maxNumber: DEFAULT_LIMITS.maxNumber,
   maxItems: DEFAULT_LIMITS.maxItems,
+  // Model pre-warming through LM Studio's native REST API.
+  preload: null,
+  contextLength: null,
+  flashAttention: null,
+  numExperts: null,
+  evalBatchSize: null,
+  apiToken: null,
 };
 
 /** Ports LM Studio is commonly served on, probed when the configured upstream is down. */
@@ -36,6 +43,9 @@ const NUMERIC = new Set([
   'maxStringLength',
   'maxNumber',
   'maxItems',
+  'contextLength',
+  'numExperts',
+  'evalBatchSize',
 ]);
 
 const BOOLEAN = new Set([
@@ -47,6 +57,7 @@ const BOOLEAN = new Set([
   'hoistImages',
   'sanitizeTools',
   'repairToolPairing',
+  'flashAttention',
 ]);
 
 const ENV_MAP = {
@@ -59,6 +70,9 @@ const ENV_MAP = {
   CLAUDE_LMSTUDIO_COUNT_TOKENS: 'countTokens',
   CLAUDE_LMSTUDIO_CHARS_PER_TOKEN: 'charsPerToken',
   CLAUDE_LMSTUDIO_SYSTEM_MESSAGES: 'systemMessages',
+  CLAUDE_LMSTUDIO_PRELOAD: 'preload',
+  CLAUDE_LMSTUDIO_CONTEXT_LENGTH: 'contextLength',
+  CLAUDE_LMSTUDIO_API_TOKEN: 'apiToken',
 };
 
 function camel(flag) {
@@ -178,6 +192,14 @@ claude-lmstudio — compatibility proxy between Claude Code and LM Studio
     --count-tokens <mode>      local | upstream | passthrough    (default local)
     --chars-per-token <n>      Estimator ratio                   (default 3.5)
     --no-calibrate             Do not calibrate against real usage counts
+
+  Model pre-warming (LM Studio native REST API)
+    --preload <model>          Load this model before the first request
+    --context-length <n>       Context window to load it with (Claude Code needs 25k+)
+    --num-experts <n>          Active experts for MoE models
+    --flash-attention          Enable flash attention
+    --eval-batch-size <n>      Prompt batch size
+    --api-token <token>        Bearer token for LM Studio's native REST API
 
   Diagnostics
     --ping-interval <ms>       SSE keepalive interval, 0 disables (default 10000)
