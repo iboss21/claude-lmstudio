@@ -1,0 +1,209 @@
+{
+  "model": "claude-fable-5.0-rg35bmoe",
+  "max_tokens": 32000,
+  "stream": true,
+  "thinking": {
+    "type": "adaptive"
+  },
+  "context_management": {
+    "edits": [
+      {
+        "type": "clear_thinking_20251015",
+        "keep": "all"
+      }
+    ]
+  },
+  "output_config": {
+    "effort": "xhigh"
+  },
+  "metadata": {
+    "user_id": "redacted"
+  },
+  "system": [
+    {
+      "type": "text",
+      "text": "You are Claude Code."
+    }
+  ],
+  "tools": [
+    {
+      "name": "Write",
+      "description": "Write a file",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ]
+    },
+    {
+      "role": "system",
+      "content": "The following deferred tools are now available via ToolSearch."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "pondering",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "Looking."
+        },
+        {
+          "type": "tool_use",
+          "id": "tu_ok",
+          "name": "ToolSearch",
+          "input": {
+            "query": "select:Nothing",
+            "max_results": 1
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "tu_ok",
+          "content": "No matching deferred tools found"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "tu_bad",
+          "name": "ToolSearch",
+          "input": {
+            "query": "select:Write,Edit,Grep,Bash",
+            "max_results": 4
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "tu_bad",
+          "content": [
+            {
+              "type": "tool_reference",
+              "tool_name": "Write"
+            },
+            {
+              "type": "tool_reference",
+              "tool_name": "Edit"
+            },
+            {
+              "type": "tool_reference",
+              "tool_name": "Grep"
+            },
+            {
+              "type": "tool_reference",
+              "tool_name": "Bash"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Tool loaded.\n"
+        },
+        {
+          "type": "text",
+          "text": "continue"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "tu_img",
+          "name": "Screenshot",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "tu_img",
+          "content": [
+            {
+              "type": "text",
+              "text": "screenshot taken"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "here it is",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgo="
+          }
+        }
+      ]
+    },
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "reminder",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "go on"
+        }
+      ]
+    }
+  ]
+}
