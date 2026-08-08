@@ -111,3 +111,31 @@ test('calibration is applied to the reported count', () => {
   const scaled = countRequestTokens(body, { calibration: 2 });
   assert.equal(scaled, Math.ceil(plain * 2));
 });
+
+test('a cached prefix still counts toward the prompt size', async () => {
+  const { totalInputTokens } = await import('../src/tokenizer.js');
+  assert.equal(totalInputTokens({ input_tokens: 100 }), 100);
+  // Counting only input_tokens here would report 100 for a 5100-token prompt and drag
+  // the calibration factor toward zero — the direction that overflows the context.
+  assert.equal(
+    totalInputTokens({ input_tokens: 100, cache_read_input_tokens: 4000, cache_creation_input_tokens: 1000 }),
+    5100
+  );
+  assert.equal(totalInputTokens(null), 0);
+});
+
+test('one anomalous sample cannot set the calibration factor outright', () => {
+  const calibrator = new TokenCalibrator();
+  // A single wildly-low reading, e.g. a backend reporting only uncached tokens.
+  calibrator.record(10_000, 100);
+  assert.ok(calibrator.value > 0.85, `one sample should barely move it, got ${calibrator.value}`);
+  // Sustained evidence still moves it.
+  for (let i = 0; i < 40; i++) calibrator.record(10_000, 100);
+  assert.ok(calibrator.value <= 0.65);
+});
+
+test('the calibration floor keeps under-counting bounded', () => {
+  const calibrator = new TokenCalibrator();
+  for (let i = 0; i < 200; i++) calibrator.record(10_000, 1);
+  assert.ok(calibrator.value >= 0.6, `floor should hold, got ${calibrator.value}`);
+});

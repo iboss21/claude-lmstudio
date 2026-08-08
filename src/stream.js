@@ -43,7 +43,12 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
   }
 
   return new Promise((resolve) => {
-    let atEventBoundary = true;
+    // The last two bytes seen, tracked ACROSS chunks: a terminator split as "…\n" then
+    // "\n" still ends an event, and treating each chunk in isolation would latch ping
+    // injection off for the whole following silent window — exactly when it is needed.
+    let prevByte = 0x0a;
+    let lastByte = 0x0a;
+    const atBoundary = () => prevByte === 0x0a && lastByte === 0x0a;
     let tail = '';
     let usage = null;
     let settled = false;
@@ -51,7 +56,7 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
     const timer =
       pingIntervalMs > 0
         ? setInterval(() => {
-            if (!atEventBoundary || clientRes.writableEnded) return;
+            if (!atBoundary() || clientRes.writableEnded) return;
             clientRes.write(PING_FRAME);
           }, pingIntervalMs)
         : null;
@@ -87,7 +92,13 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
     };
 
     upstreamRes.on('data', (chunk) => {
-      atEventBoundary = chunk.length >= 2 && chunk.subarray(chunk.length - 2).toString() === '\n\n';
+      if (chunk.length >= 2) {
+        prevByte = chunk[chunk.length - 2];
+        lastByte = chunk[chunk.length - 1];
+      } else if (chunk.length === 1) {
+        prevByte = lastByte;
+        lastByte = chunk[0];
+      }
       scanForUsage(chunk);
       const ok = clientRes.write(chunk);
       if (!ok) {

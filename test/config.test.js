@@ -87,3 +87,13 @@ test('every flag documented in --help is actually accepted', () => {
 
   assert.deepEqual(broken, [], `documented flags that do not resolve:\n${broken.join('\n')}`);
 });
+
+test('enum options are validated instead of silently misbehaving', () => {
+  // An unrecognized --count-tokens mode used to fall through to forwarding, handing
+  // Claude Code the bogus 200 the proxy exists to intercept.
+  assert.throws(() => resolveConfig(['--count-tokens', 'lokal'], {}), /--count-tokens expects/);
+  assert.throws(() => resolveConfig(['--system-messages', 'hoisted'], {}), /--system-messages expects/);
+  for (const mode of ['local', 'upstream', 'passthrough']) {
+    assert.equal(resolveConfig(['--count-tokens', mode], {}).countTokens, mode);
+  }
+});

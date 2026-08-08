@@ -158,6 +158,19 @@ export function resolveConfig(argv = [], env = process.env) {
     config[key] = coerce(key, value);
   }
 
+  const COUNT_TOKEN_MODES = ['local', 'upstream', 'passthrough'];
+  if (!COUNT_TOKEN_MODES.includes(config.countTokens)) {
+    throw new Error(
+      `--count-tokens expects one of ${COUNT_TOKEN_MODES.join(' | ')}, got "${config.countTokens}"`
+    );
+  }
+  const SYSTEM_MESSAGE_MODES = ['keep', 'user', 'hoist'];
+  if (!SYSTEM_MESSAGE_MODES.includes(config.systemMessages)) {
+    throw new Error(
+      `--system-messages expects one of ${SYSTEM_MESSAGE_MODES.join(' | ')}, got "${config.systemMessages}"`
+    );
+  }
+
   if (!/^https?:\/\//.test(config.upstream)) config.upstream = `http://${config.upstream}`;
   config.upstream = config.upstream.replace(/\/+$/, '');
 

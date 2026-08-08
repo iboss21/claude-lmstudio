@@ -189,3 +189,24 @@ test('images are dropped only when upstream actually complains about them', () =
   assert.equal(repairFromError(body, 'context length exceeded'), null);
   assert.equal(body.messages[0].content[1].type, 'image', 'original untouched');
 });
+
+test('a crafted upstream path cannot reach the prototype chain', () => {
+  const body = { model: 'local', messages: [] };
+  const before = Object.prototype.polluted;
+
+  repairFromError(body, 'request.__proto__.polluted.type: Invalid literal value, expected "text"');
+  repairFromError(body, "request.constructor: Unrecognized key(s) in object: 'prototype'");
+
+  assert.equal(Object.prototype.polluted, before);
+  assert.equal({}.polluted, undefined);
+});
+
+test('the upstream error type is preserved, not relabelled', async () => {
+  const { extractErrorType } = await import('../src/repair.js');
+  assert.equal(
+    extractErrorType(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'busy' } })),
+    'overloaded_error'
+  );
+  assert.equal(extractErrorType('not json'), null);
+  assert.equal(extractErrorType(null), null);
+});

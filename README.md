@@ -209,8 +209,12 @@ curl http://localhost:2140/health
 | `POST /v1/messages/count_tokens` | **not implemented** | answered locally with a real `{"input_tokens": N}` |
 | streaming, minutes of silence during prompt processing | connection looks dead, client aborts at 300s | commits the stream after 20s of upstream silence and pings every 10s |
 
-Every transformation is a no-op when there is nothing to do — a request that already
-validates is forwarded byte-identical, so the proxy cannot cause its own bugs.
+Every transformation is a no-op when there is nothing to do, so a request that already
+validates passes through semantically unchanged. It is not *byte*-identical: the body
+is parsed and re-serialized on every request, which normalizes key order and
+whitespace. That is deliberate — LM Studio's prefix cache keys on the rendered prompt,
+not the raw bytes — but it does mean the proxy is in the path of every request, not
+only broken ones.
 
 **Upstream errors are forwarded verbatim.** Anthropic's gateway protocol reference
 warns that *"the retry logic matches on the upstream's error wording, so forward error
@@ -391,7 +395,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 97 tests, no network, no LM Studio required
+npm test          # 103 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

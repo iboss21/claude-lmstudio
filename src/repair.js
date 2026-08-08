@@ -147,8 +147,11 @@ function resolve(root, path) {
   return node;
 }
 
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function setAt(root, path, value) {
   if (!path.length) return false;
+  if (path.some((k) => UNSAFE_KEYS.has(k))) return false;
   const parent = resolve(root, path.slice(0, -1));
   if (parent == null || typeof parent !== 'object') return false;
   const key = path[path.length - 1];
@@ -164,6 +167,7 @@ function setAt(root, path, value) {
 
 function deleteAt(root, path) {
   if (!path.length) return false;
+  if (path.some((k) => UNSAFE_KEYS.has(k))) return false;
   const parent = resolve(root, path.slice(0, -1));
   if (parent == null || typeof parent !== 'object' || Array.isArray(parent)) return false;
   const key = path[path.length - 1];
@@ -241,6 +245,19 @@ export function repairFromError(body, errorMessage, opts = {}) {
   }
 
   return null;
+}
+
+/** Pull the error type out of an Anthropic-style error envelope, if it declares one. */
+export function extractErrorType(payload) {
+  if (!payload) return null;
+  if (typeof payload === 'string') {
+    try {
+      return extractErrorType(JSON.parse(payload));
+    } catch {
+      return null;
+    }
+  }
+  return payload?.error?.type ?? null;
 }
 
 /** Pull the human-readable message out of an Anthropic-style error envelope. */

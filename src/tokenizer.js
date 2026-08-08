@@ -1,12 +1,17 @@
 /**
  * Token estimation for `/v1/messages/count_tokens`.
  *
- * LM Studio does not implement that endpoint, and its router does not match the
- * `?beta=true` variant Claude Code actually calls — it logs
- * "Unexpected endpoint or method … Returning 200 anyway" and hands back a body
- * Claude Code cannot read. Claude Code uses those counts to decide when to compact
- * the conversation, so a broken counter means the history grows without bound until
- * every turn is a multi-minute prompt-processing stall on a local model.
+ * LM Studio does not implement that endpoint. Anthropic's gateway protocol reference
+ * says token counting is optional and that Claude Code estimates context usage locally
+ * when it is absent — so a clean 404 would be fine. What is not fine is what LM Studio
+ * actually does: it answers unknown routes with HTTP 200 and a body that is not an
+ * Anthropic response, which the client cannot detect as a failure. Claude Code drives
+ * auto-compaction off these counts, so the history then grows without bound until every
+ * turn is a multi-minute prompt-processing stall.
+ *
+ * (Its log line "Unexpected endpoint or method … Returning 200 anyway" also fires for
+ * routes it does implement, so it is not evidence about the `?beta=true` variant
+ * specifically. The proxy routes on the pathname and answers both forms regardless.)
  *
  * There is no tokenizer exposed over LM Studio's REST API, so we estimate — and then
  * self-calibrate against the real `usage.input_tokens` that comes back on every
@@ -129,8 +134,20 @@ export function countRequestTokens(body, opts = {}) {
  * Exponential moving average of (real tokens / estimated tokens), so the estimate
  * converges on whatever tokenizer the loaded GGUF actually uses.
  */
+export function totalInputTokens(usage) {
+  if (!usage) return 0;
+  // A cached prefix is still prompt the model must fit. Backends report it separately,
+  // and counting only `input_tokens` would make the calibration factor collapse toward
+  // zero on a long conversation — the direction that overflows the context window.
+  return (
+    (usage.input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0)
+  );
+}
+
 export class TokenCalibrator {
-  constructor({ alpha = 0.25, min = 0.4, max = 2.5 } = {}) {
+  constructor({ alpha = 0.25, min = 0.6, max = 2.5 } = {}) {
     this.alpha = alpha;
     this.min = min;
     this.max = max;
@@ -150,8 +167,9 @@ export class TokenCalibrator {
     if (!Number.isFinite(ratio)) return this.factor;
 
     const clamped = Math.min(Math.max(ratio, this.min), this.max);
-    this.factor =
-      this.samples === 0 ? clamped : this.factor * (1 - this.alpha) + clamped * this.alpha;
+    // Always smooth, including the first sample. Adopting sample one outright let a
+    // single anomalous usage number set the factor permanently.
+    this.factor = this.factor * (1 - this.alpha) + clamped * this.alpha;
     this.samples += 1;
     return this.factor;
   }

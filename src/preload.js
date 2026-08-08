@@ -83,9 +83,11 @@ export async function preloadModel(config) {
  * Warn when a request will not fit the loaded context window. Without this the
  * failure mode is silent truncation, which reads as the model ignoring instructions.
  */
-export function makeContextGuard(contextLength) {
+export function makeContextGuard(getContextLength) {
   let warned = false;
+  const read = typeof getContextLength === 'function' ? getContextLength : () => getContextLength;
   return (inputTokens) => {
+    const contextLength = read();
     if (!contextLength || warned) return;
     if (inputTokens < contextLength * 0.9) return;
     warned = true;

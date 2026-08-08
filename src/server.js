@@ -4,8 +4,8 @@ import { normalizeRequest, summarizeStats } from './normalize/index.js';
 import { normalizerOptions, COMMON_UPSTREAM_PORTS } from './config.js';
 import { sendUpstream, readAll, forwardableHeaders, dropBetaValues } from './upstream.js';
 import { pipeSse, isEventStream, startEarlyPing, writeSseError } from './stream.js';
-import { countRequestTokens, TokenCalibrator } from './tokenizer.js';
-import { repairFromError, extractErrorMessage } from './repair.js';
+import { countRequestTokens, TokenCalibrator, totalInputTokens } from './tokenizer.js';
+import { repairFromError, extractErrorMessage, extractErrorType } from './repair.js';
 import { makeContextGuard } from './preload.js';
 import { log, dump, configureLogger } from './logger.js';
 
@@ -54,7 +54,8 @@ export function createServer(config) {
     calibration: config.calibrate ? calibrator.value : 1,
   });
 
-  const guardContext = makeContextGuard(config.contextLength);
+  // Read lazily: the real context length is only known after the model is loaded.
+  const guardContext = makeContextGuard(() => config.contextLength);
 
   /**
    * POST /v1/messages — normalize, forward, and retry through upstream validation
@@ -133,11 +134,13 @@ export function createServer(config) {
             pingIntervalMs: config.pingIntervalMs,
             headersSent: committed,
           });
-          if (config.calibrate && usage?.input_tokens) {
+          const actual = totalInputTokens(usage);
+          if (config.calibrate && actual > 0) {
             const estimate = countRequestTokens(current, { charsPerToken: config.charsPerToken });
-            calibrator.record(estimate, usage.input_tokens);
+            calibrator.record(estimate, actual);
+            guardContext(actual);
             log.debug(
-              `token calibration: est=${estimate} actual=${usage.input_tokens} factor=${calibrator.value.toFixed(3)}`
+              `token calibration: est=${estimate} actual=${actual} factor=${calibrator.value.toFixed(3)}`
             );
           }
           return;
@@ -157,10 +160,11 @@ export function createServer(config) {
         }
         if (config.calibrate) {
           try {
-            const usage = JSON.parse(buffered.toString('utf8'))?.usage;
-            if (usage?.input_tokens) {
+            const actual = totalInputTokens(JSON.parse(buffered.toString('utf8'))?.usage);
+            if (actual > 0) {
               const estimate = countRequestTokens(current, { charsPerToken: config.charsPerToken });
-              calibrator.record(estimate, usage.input_tokens);
+              calibrator.record(estimate, actual);
+              guardContext(actual);
             }
           } catch {
             // Non-JSON success body; nothing to calibrate against.
@@ -210,7 +214,7 @@ export function createServer(config) {
         if (early?.committed) {
           // Headers are already out as a 200 stream. Preserve the upstream's exact
           // wording, which is what Claude Code's retry logic matches on.
-          writeSseError(res, message, 'invalid_request_error');
+          writeSseError(res, message, extractErrorType(text) ?? 'api_error');
           return;
         }
 

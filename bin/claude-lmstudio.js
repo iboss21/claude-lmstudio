@@ -46,7 +46,9 @@ server.listen(config.port, config.host, async () => {
   const probe = await probeUpstream(config);
   if (probe.ok) {
     log.info('upstream reachable');
-    await preloadModel(config);
+    const loaded = await preloadModel(config);
+    // Warn against the window the model really has, not the one we asked for.
+    if (loaded?.context_length) config.contextLength = loaded.context_length;
   } else if (probe.suggestion) {
     log.warn(
       `no LM Studio server answered at ${config.upstream}, but one is running at ${probe.suggestion} — ` +
