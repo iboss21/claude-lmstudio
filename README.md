@@ -47,6 +47,18 @@ finds tools, it returns them as structured references:
 **2. `image` — from screenshot tools.** `Claude Browser: preview screenshot` returns
 the PNG inside the `tool_result`.
 
+This one is confirmed independently on LM Studio's own Discord, in an open thread
+titled "Anthropic-compatible API support for images in `tool_result`" (30 July 2026),
+reporting the same error verbatim and the same permanence:
+
+> Currently using Claude Code, it looks like it is impossible for the model to read an
+> image file on its own. […] If the model does attempt to read an image file, the
+> entire conversation is bricked and can't be continued/appended to.
+
+Note what that means for the client-side fix below: **no Claude Code setting turns
+screenshots off.** If your workflow reads images, the config change alone will not
+save you.
+
 Anthropic's current Messages API schema lists `tool_reference` in the
 `tool_result.content` union, and LM Studio implements a strictly narrower subset.
 
@@ -65,6 +77,27 @@ changes what you should do:
 
 So: **there is a client setting that stops this** (see the next section), and the
 proxy exists for the cases that setting cannot reach.
+
+### The `"text"` vs `"message"` confusion
+
+There is a claim going around that the error comes from a typo — `"message"` written
+where `"text"` belongs. That is not a typo in anyone's documentation, but the
+confusion is real and it produces the identical error, because **LM Studio's two APIs
+name the same thing differently**:
+
+| | text part | field holding the text |
+|---|---|---|
+| LM Studio native `POST /api/v1/chat` | `"type": "message"` | `content` |
+| Anthropic `POST /v1/messages` | `"type": "text"` | `text` |
+
+Code written against `/api/v1/chat` and pointed at `/v1/messages` therefore emits
+`{"type": "message", "content": "…"}` and gets back `Invalid literal value, expected
+"text"` — the same string, with no `tool_reference` and no image involved. The proxy
+renders that shape into a proper text block rather than JSON-dumping it, so a mixed-up
+client still works.
+
+It is **not** what happened in the captured session here: that block was a
+`tool_reference`, read directly out of the request body in LM Studio's log.
 
 ### Why it looks like it "worked before, then broke forever"
 
@@ -402,7 +435,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 126 tests, no network, no LM Studio required
+npm test          # 127 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

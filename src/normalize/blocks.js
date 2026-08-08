@@ -67,6 +67,13 @@ export function describeBlock(block, opts = {}) {
     case 'thinking':
       return typeof block.thinking === 'string' ? block.thinking : '';
 
+    // LM Studio's own /api/v1/chat calls a text part {"type":"message","content":"…"},
+    // where the Anthropic Messages API calls it {"type":"text","text":"…"}. Code that
+    // mixes the two APIs emits the former and gets `expected "text"` back. Render it
+    // rather than JSON-dumping it, so the text survives instead of becoming noise.
+    case 'message':
+      return typeof block.content === 'string' ? block.content : '';
+
     case 'redacted_thinking':
       return '';
 

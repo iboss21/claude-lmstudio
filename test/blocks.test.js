@@ -151,3 +151,13 @@ test('describeBlock renders each known type without throwing', () => {
   assert.equal(describeBlock(null), null);
   assert.equal(describeBlock('raw string'), 'raw string');
 });
+
+test('an LM Studio-native text part is rendered, not JSON-dumped', () => {
+  // /api/v1/chat spells a text part {"type":"message","content":"…"}; the Messages API
+  // spells it {"type":"text","text":"…"}. Mixing the two is what produces
+  // `Invalid literal value, expected "text"` with no tool_reference involved.
+  assert.equal(describeBlock({ type: 'message', content: 'hello there' }), 'hello there');
+
+  const result = coerceToolResultContent([{ type: 'message', content: 'tool output' }]);
+  assert.deepEqual(result.content, [{ type: 'text', text: 'tool output' }]);
+});
