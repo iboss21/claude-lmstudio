@@ -344,3 +344,28 @@ test('a system turn rewritten to user never displaces the following tool_results
 
   assertToolResultsLead(body, 'system->user');
 });
+
+test('merging assistant turns keeps thinking blocks leading', () => {
+  // Hoisting a system message out from between two assistant turns makes them
+  // adjacent; concatenating them blindly would leave a thinking block mid-array,
+  // which extended thinking forbids.
+  const { body } = normalizeRequest(
+    {
+      model: 'local',
+      max_tokens: 10,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'go' }] },
+        { role: 'assistant', content: [{ type: 'thinking', thinking: 'a', signature: '' }, { type: 'text', text: 'one' }] },
+        { role: 'system', content: 'reminder' },
+        { role: 'assistant', content: [{ type: 'thinking', thinking: 'b', signature: '' }, { type: 'text', text: 'two' }] },
+      ],
+    },
+    { systemMessages: 'hoist' }
+  );
+
+  const merged = body.messages.find((m) => m.role === 'assistant');
+  const types = merged.content.map((b) => b.type);
+  const lastThinking = types.lastIndexOf('thinking');
+  const firstOther = types.findIndex((t) => t !== 'thinking');
+  assert.ok(firstOther > lastThinking, `thinking must lead, got ${types.join(',')}`);
+});

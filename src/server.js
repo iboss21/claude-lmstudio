@@ -179,11 +179,11 @@ export function createServer(config) {
       const text = errorBody.toString('utf8');
       const message = extractErrorMessage(text) ?? text;
 
-      // A retry that still fails after we relocated images means this build will not
-      // take top-level images either. Stop hoisting and render them as placeholders.
-      if (lastRepairHoisted > 0 && runtime.hoistImages) {
+      // Only stop hoisting when upstream actually objects to images, and only after we
+      // relocated some — a second 400 about something else says nothing about them.
+      if (lastRepairHoisted > 0 && runtime.hoistImages && /\bimages?\b/i.test(message)) {
         runtime.hoistImages = false;
-        log.warn('upstream rejected hoisted images too — falling back to text placeholders');
+        log.warn('upstream rejected relocated images too — falling back to text placeholders');
       }
 
       const canRetry = config.autoRepair && attempts < config.maxRepairAttempts && status === 400;

@@ -6,7 +6,7 @@ import {
   mergeAdjacentRoles,
   repairToolPairing,
   dropEmptyMessages,
-  enforceToolResultOrder,
+  enforceBlockOrder,
 } from './messages.js';
 
 export { sanitizeTools, sanitizeSchema, DEFAULT_LIMITS } from './tools.js';
@@ -22,7 +22,7 @@ export {
   mergeAdjacentRoles,
   repairToolPairing,
   dropEmptyMessages,
-  enforceToolResultOrder,
+  enforceBlockOrder,
   normalizeMessageContents,
 } from './messages.js';
 
@@ -86,7 +86,7 @@ export function normalizeRequest(body, options = {}) {
   if (opts.dropEmpty) messages = dropEmptyMessages(messages, stats);
   if (opts.mergeAdjacent) messages = mergeAdjacentRoles(messages, stats);
   // Last, because merging and demotion can both disturb it.
-  messages = enforceToolResultOrder(messages, stats);
+  messages = enforceBlockOrder(messages, stats);
 
   if (messages !== original) out = { ...out, messages };
 

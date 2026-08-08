@@ -166,3 +166,26 @@ test('the guard sweep never splices an image between two tool_results', () => {
     ['tool_result', 'tool_result', 'image']
   );
 });
+
+test('images are dropped only when upstream actually complains about them', () => {
+  const body = {
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'x' } },
+        ],
+      },
+    ],
+  };
+
+  const dropped = repairFromError(body, 'This model does not support image input');
+  assert.ok(dropped);
+  assert.deepEqual(dropped.body.messages[0].content.map((b) => b.type), ['text', 'text']);
+  assert.match(dropped.body.messages[0].content[1].text, /image omitted/);
+
+  // An unrelated failure must never cost the user their screenshots.
+  assert.equal(repairFromError(body, 'context length exceeded'), null);
+  assert.equal(body.messages[0].content[1].type, 'image', 'original untouched');
+});

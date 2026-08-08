@@ -13,7 +13,7 @@
  */
 
 import { describeBlock, coerceToolResultContent } from './normalize/blocks.js';
-import { enforceToolResultOrder } from './normalize/messages.js';
+import { enforceBlockOrder } from './normalize/messages.js';
 
 /**
  * LM Studio states the tool_result rule two different ways depending on version:
@@ -22,6 +22,37 @@ import { enforceToolResultOrder } from './normalize/messages.js';
  * rather than a pinpoint fix.
  */
 const TOOL_RESULT_GUARD = /Only text tool_result blocks are supported/i;
+
+/** A pathless complaint about images — the model has no vision projector, or the build refuses them. */
+const IMAGE_REJECTION = /\bimages?\b/i;
+
+/**
+ * Replace every image block with a text placeholder.
+ *
+ * Only used after upstream has actually rejected images. Relocating them out of a
+ * tool_result is lossless and preferred; this throws the pixels away, so it must never
+ * fire speculatively.
+ *
+ * @returns {{ body: object, description: string } | null}
+ */
+export function replaceImagesWithText(body) {
+  if (!Array.isArray(body?.messages)) return null;
+
+  const clone = structuredClone(body);
+  let replaced = 0;
+
+  for (const message of clone.messages) {
+    if (!Array.isArray(message?.content)) continue;
+    message.content = message.content.map((block) => {
+      if (block?.type !== 'image') return block;
+      replaced += 1;
+      return { type: 'text', text: '[image omitted: not supported by this model]' };
+    });
+  }
+
+  if (!replaced) return null;
+  return { body: clone, description: `replaced ${replaced} image block(s) with text` };
+}
 
 /**
  * Force every `tool_result.content` array in the body down to a single text block.
@@ -70,7 +101,7 @@ export function coerceAllToolResults(body, opts = {}) {
     message.content = [...next, ...relocated];
   }
 
-  clone.messages = enforceToolResultOrder(clone.messages);
+  clone.messages = enforceBlockOrder(clone.messages);
 
   if (!rewritten) return null;
   return {
@@ -156,6 +187,11 @@ export function repairFromError(body, errorMessage, opts = {}) {
   }
 
   const parsed = parseValidationError(errorMessage);
+
+  // A pathless image complaint: drop the pixels rather than the session.
+  if (!parsed && typeof errorMessage === 'string' && IMAGE_REJECTION.test(errorMessage)) {
+    return replaceImagesWithText(body);
+  }
   if (!parsed) return null;
 
   const { path, reason } = parsed;

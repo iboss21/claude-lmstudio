@@ -195,40 +195,52 @@ export function repairToolPairing(messages, stats = {}) {
   return modified ? out : messages;
 }
 
+const LEADING_BLOCKS = {
+  // The Messages API requires tool_result blocks to open a user turn...
+  user: new Set(['tool_result']),
+  // ...and thinking blocks to open an assistant turn when extended thinking is on.
+  assistant: new Set(['thinking', 'redacted_thinking']),
+};
+
 /**
- * The Messages API requires every `tool_result` block to appear at the start of its
- * user turn. Several transformations can break that on their own — hoisting an image
- * out of the first of several tool_results, demoting an orphaned result to text,
- * merging a rewritten system turn into the following one — so rather than trusting
- * each site to be careful, the invariant is restored once at the end.
+ * Restore the block-ordering rules the Messages API imposes on a turn.
+ *
+ * Several transformations can break these on their own — hoisting an image out of the
+ * first of several tool_results, demoting an orphaned result to text, merging a
+ * rewritten system turn into the following one, concatenating two assistant turns
+ * whose thinking blocks then sit mid-array — so rather than trusting every site to be
+ * careful, the invariant is restored once, here.
  *
  * The partition is stable, so blocks keep their relative order within each group.
  */
-export function enforceToolResultOrder(messages, stats = {}) {
+export function enforceBlockOrder(messages, stats = {}) {
   let modified = false;
 
   const out = messages.map((message) => {
-    if (message?.role !== 'user' || !Array.isArray(message.content)) return message;
+    const leading = LEADING_BLOCKS[message?.role];
+    if (!leading || !Array.isArray(message.content)) return message;
 
     const content = message.content;
-    const firstOther = content.findIndex((b) => b?.type !== 'tool_result');
+    const firstOther = content.findIndex((b) => !leading.has(b?.type));
     if (firstOther === -1) return message;
-    const needsSort = content.slice(firstOther).some((b) => b?.type === 'tool_result');
-    if (!needsSort) return message;
+    if (!content.slice(firstOther).some((b) => leading.has(b?.type))) return message;
 
     modified = true;
     stats.turnsReordered = (stats.turnsReordered ?? 0) + 1;
     return {
       ...message,
       content: [
-        ...content.filter((b) => b?.type === 'tool_result'),
-        ...content.filter((b) => b?.type !== 'tool_result'),
+        ...content.filter((b) => leading.has(b?.type)),
+        ...content.filter((b) => !leading.has(b?.type)),
       ],
     };
   });
 
   return modified ? out : messages;
 }
+
+/** @deprecated kept as the previous name for the user-turn case. */
+export const enforceToolResultOrder = enforceBlockOrder;
 
 /** Drop messages whose content ended up empty — most backends reject them. */
 export function dropEmptyMessages(messages, stats = {}) {
