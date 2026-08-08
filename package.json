@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "start": "node bin/claude-lmstudio.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18.0.0"

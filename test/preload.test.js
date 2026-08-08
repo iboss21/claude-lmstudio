@@ -107,7 +107,8 @@ test('an unreachable upstream does not throw out of preload', async () => {
   assert.equal(await preloadModel(config), null);
 });
 
-test('the recommended context length is above what LM Studio defaults to', () => {
-  // LM Studio's default dropped to 8k in 0.4.16 Build 2.
-  assert.ok(RECOMMENDED_CONTEXT_LENGTH > 8_192);
+test('the recommended context length reflects what Claude Code actually needs', () => {
+  // LM Studio's default dropped to 8k in 0.4.16 Build 2. 32k was also tried and is not
+  // enough once the tool schemas load upfront — 77k is the reported working floor.
+  assert.ok(RECOMMENDED_CONTEXT_LENGTH >= 77_000);
 });

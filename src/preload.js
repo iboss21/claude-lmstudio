@@ -8,7 +8,7 @@ import { log } from './logger.js';
  *
  *  1. `/v1/messages` cannot set context length per request — it is a load-time
  *     property. LM Studio's default dropped to 8k in 0.4.16 Build 2, while a Claude
- *     Code session needs well over 25k, and the overflow shows up as truncation or a
+ *     Code session needs 77k or more in practice, and the overflow shows up as truncation or a
  *     stalled agent loop rather than a clear error.
  *
  *  2. JIT loading means the first request after an idle period pays a full model
@@ -17,8 +17,14 @@ import { log } from './logger.js';
  * Loading deliberately up front, with an explicit context length, removes both.
  */
 
-/** Below this, a Claude Code session will thrash or truncate. */
-export const RECOMMENDED_CONTEXT_LENGTH = 25_000;
+/**
+ * Below this, a Claude Code session thrashes or truncates in practice.
+ *
+ * Reported from real use rather than derived: Claude Code's system prompt, ~30 tool
+ * schemas loaded upfront (roughly 14-16k tokens once tool search is off), and a working
+ * conversation do not fit in less. 32k is not enough.
+ */
+export const RECOMMENDED_CONTEXT_LENGTH = 77_000;
 
 export function buildLoadBody(config) {
   const body = { model: config.preload, echo_load_config: true };

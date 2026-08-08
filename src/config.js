@@ -231,7 +231,7 @@ claude-lmstudio — compatibility proxy between Claude Code and LM Studio
 
   Model pre-warming (LM Studio native REST API)
     --preload <model>          Load this model before the first request
-    --context-length <n>       Context window to load it with (Claude Code needs 25k+)
+    --context-length <n>       Context window to load it with (Claude Code needs 77k+)
     --num-experts <n>          Active experts for MoE models
     --flash-attention          Enable flash attention
     --eval-batch-size <n>      Prompt batch size

@@ -129,8 +129,12 @@ On the CLI the equivalents are leaving `ENABLE_TOOL_SEARCH` unset, or setting
 Turning tool search off means all ~30 tool schemas load upfront on every request —
 roughly **14–16k tokens of context instead of ~1k**. LM Studio's default context
 length has been 8k since 0.4.16 Build 2, so on a default setup this trades one hard
-failure for another. Load the model with 32k+ first (`--preload` below does it, or
-set it in the model's load config).
+failure for another.
+
+**Load the model with at least 77k context.** That figure is from running this setup,
+not from arithmetic: Claude Code's system prompt, the upfront tool schemas, and a
+working conversation do not fit in less. 32k is not enough. `--preload` below sets it,
+or set it in the model's load config and reload.
 
 If you only ever hit the `tool_reference` error and your context window is large
 enough, the config change is the whole fix and you can stop reading here.
@@ -309,7 +313,7 @@ the session. Turn it off with `--no-auto-repair`; see what it caught with
 --no-calibrate             Do not calibrate against real usage counts
 
 --preload <model>          Load this model before the first request
---context-length <n>       Context window to load it with (Claude Code needs 25k+)
+--context-length <n>       Context window to load it with (Claude Code needs 77k+)
 --num-experts <n>          Active experts for MoE models
 --flash-attention          Enable flash attention
 --eval-batch-size <n>      Prompt batch size
@@ -334,7 +338,7 @@ Equivalent env vars: `CLAUDE_LMSTUDIO_UPSTREAM`, `CLAUDE_LMSTUDIO_PORT`,
 
 `/v1/messages` cannot set context length per request — it is a **load-time** property,
 and LM Studio's default dropped to 8k in 0.4.16 Build 2 while a Claude Code session
-needs well over 25k. Separately, JIT loading means the first request after an idle
+needs 77k or more in practice. Separately, JIT loading means the first request after an idle
 period pays a full model load, which looks exactly like a timeout.
 
 The proxy can load the model up front through LM Studio's native REST API:
@@ -342,12 +346,12 @@ The proxy can load the model up front through LM Studio's native REST API:
 ```bash
 node bin/claude-lmstudio.js \
   --preload regescore-1.0-35b \
-  --context-length 32000 \
+  --context-length 77000 \
   --num-experts 4 \
   --flash-attention
 ```
 
-It reports the context length LM Studio actually applied, warns if it is below 25k,
+It reports the context length LM Studio actually applied, warns if it is below 77k,
 and warns again if a request's estimated size approaches the window — the failure
 mode otherwise is silent truncation, which reads as the model ignoring instructions.
 A failed preload is logged, never fatal.
@@ -383,7 +387,7 @@ them for you — check them if you still see stalls or truncated replies:
   as a hang. If your model ships its own `<think>` template, try turning this **off**.
 - **Context length and JIT loading.** Both are covered by `--preload` above, but if
   you would rather not use it: raise the model's context length in its load config
-  (8k default since 0.4.16 Build 2, and Claude Code needs 25k+), and load the model
+  (8k default since 0.4.16 Build 2, and Claude Code needs 77k+), and load the model
   before starting a session so the first request does not pay for it.
 - **Grammar compilation.** LM Studio 0.4.20 has an open regression where converting
   Claude Code's ~30 tool schemas to BNF crashes llama.cpp's parser
