@@ -707,3 +707,69 @@ test('abandoning a request stops the work upstream', async (t) => {
 
   assert.ok(upstreamAborted, 'upstream request should have been torn down');
 });
+
+/**
+ * Drive the in-stream keepalive: upstream sends a first event, goes silent for a while,
+ * then finishes. `--early-ping-after 0` isolates pipeSse's own ping path, which the
+ * stallMs tests never reach because those only delay the response headers.
+ */
+async function midStreamSilence(t, { splitTerminator, framing = '\n' }) {
+  const upstream = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const evt = `event: message_start${framing}data: {"type":"message_start"}${framing}${framing}`;
+      if (splitTerminator) {
+        res.write(evt.slice(0, -1));
+        setTimeout(() => res.write(evt.slice(-1)), 20);
+      } else {
+        res.write(evt);
+      }
+      setTimeout(() => {
+        res.write(`event: message_stop${framing}data: {"type":"message_stop"}${framing}${framing}`);
+        res.end();
+      }, 900);
+    });
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => upstream.close());
+
+  const config = resolveConfig(
+    [
+      '--port', '0',
+      '--upstream', `http://127.0.0.1:${upstream.address().port}`,
+      '--log-level', 'silent',
+      '--early-ping-after', '0',
+      '--ping-interval', '150',
+    ],
+    {}
+  );
+  const proxy = createServer(config);
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  t.after(() => proxy.close());
+
+  const res = await post(proxy.address().port, '/v1/messages', { model: 'm', max_tokens: 10, stream: true, messages: [{ role: 'user', content: 'hi' }] }, { raw: true });
+  return (res.text.match(/event: ping/g) ?? []).length;
+}
+
+test('pings continue through a mid-stream silence', async (t) => {
+  const pings = await midStreamSilence(t, { splitTerminator: false });
+  assert.ok(pings >= 3, `expected pings across a 900ms silence, got ${pings}`);
+});
+
+test('a terminator split across chunks does not kill the keepalive', async (t) => {
+  // The bug: boundary detection looked at one chunk at a time, so an event ending
+  // "…\n" followed by "\n" read as not-a-boundary and suppressed pings for the entire
+  // following silence — the exact window Claude Code's 300s watchdog is timing.
+  const pings = await midStreamSilence(t, { splitTerminator: true });
+  assert.ok(pings >= 3, `split terminator must not suppress pings, got ${pings}`);
+});
+
+test('CRLF-framed upstreams still get pings', async (t) => {
+  // "\r\n\r\n" never satisfies a bare "\n\n" test, which would leave the keepalive dead
+  // for the whole stream rather than just one window.
+  const pings = await midStreamSilence(t, { splitTerminator: false, framing: '\r\n' });
+  assert.ok(pings >= 3, `CRLF framing must not suppress pings, got ${pings}`);
+});

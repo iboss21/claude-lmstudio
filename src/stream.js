@@ -43,12 +43,23 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
   }
 
   return new Promise((resolve) => {
-    // The last two bytes seen, tracked ACROSS chunks: a terminator split as "…\n" then
-    // "\n" still ends an event, and treating each chunk in isolation would latch ping
-    // injection off for the whole following silent window — exactly when it is needed.
-    let prevByte = 0x0a;
-    let lastByte = 0x0a;
-    const atBoundary = () => prevByte === 0x0a && lastByte === 0x0a;
+    // A rolling window of the last four bytes, tracked ACROSS chunks. Two reasons it
+    // cannot be a per-chunk test: a terminator split as "…\n" then "\n" still ends an
+    // event, and an event boundary is a blank line, which is "\n\n" under LF framing but
+    // "\r\n\r\n" under CRLF. Getting either wrong latches ping injection off for the
+    // whole following silent window — exactly when it is needed.
+    let tailBytes = Buffer.from([0x0a, 0x0a]);
+    const atBoundary = () => {
+      const n = tailBytes.length;
+      if (n >= 2 && tailBytes[n - 2] === 0x0a && tailBytes[n - 1] === 0x0a) return true;
+      return (
+        n >= 4 &&
+        tailBytes[n - 4] === 0x0d &&
+        tailBytes[n - 3] === 0x0a &&
+        tailBytes[n - 2] === 0x0d &&
+        tailBytes[n - 1] === 0x0a
+      );
+    };
     let tail = '';
     let usage = null;
     let settled = false;
@@ -56,7 +67,7 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
     const timer =
       pingIntervalMs > 0
         ? setInterval(() => {
-            if (!atBoundary() || clientRes.writableEnded) return;
+            if (!atBoundary() || clientRes.writableEnded || clientRes.destroyed) return;
             clientRes.write(PING_FRAME);
           }, pingIntervalMs)
         : null;
@@ -92,13 +103,7 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
     };
 
     upstreamRes.on('data', (chunk) => {
-      if (chunk.length >= 2) {
-        prevByte = chunk[chunk.length - 2];
-        lastByte = chunk[chunk.length - 1];
-      } else if (chunk.length === 1) {
-        prevByte = lastByte;
-        lastByte = chunk[0];
-      }
+      tailBytes = Buffer.concat([tailBytes, chunk]).subarray(-4);
       scanForUsage(chunk);
       const ok = clientRes.write(chunk);
       if (!ok) {
@@ -160,7 +165,10 @@ export function startEarlyPing(clientRes, { delayMs, intervalMs }) {
     clientRes.write(PING_FRAME);
     if (intervalMs > 0) {
       interval = setInterval(() => {
-        if (!clientRes.writableEnded) clientRes.write(PING_FRAME);
+        // `writableEnded` is never true for an aborted response — check destroyed too,
+        // or we keep writing ping frames at a client that has already gone.
+        if (clientRes.writableEnded || clientRes.destroyed) return;
+        clientRes.write(PING_FRAME);
       }, intervalMs);
     }
   }, delayMs);
