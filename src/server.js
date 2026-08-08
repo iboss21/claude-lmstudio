@@ -2,7 +2,7 @@ import http from 'node:http';
 
 import { normalizeRequest, summarizeStats } from './normalize/index.js';
 import { normalizerOptions, COMMON_UPSTREAM_PORTS } from './config.js';
-import { sendUpstream, readAll, forwardableHeaders } from './upstream.js';
+import { sendUpstream, readAll, forwardableHeaders, dropBetaValues } from './upstream.js';
 import { pipeSse, isEventStream, startEarlyPing, writeSseError } from './stream.js';
 import { countRequestTokens, TokenCalibrator } from './tokenizer.js';
 import { repairFromError, extractErrorMessage } from './repair.js';
@@ -76,7 +76,10 @@ export function createServer(config) {
       if (summary) log.info(`rewrote request: ${summary}`);
     }
 
-    const headers = forwardableHeaders(req.headers, { 'content-type': 'application/json' });
+    let headers = forwardableHeaders(req.headers, { 'content-type': 'application/json' });
+    // Keep the beta pair intact: if the tool schemas lost `defer_loading`, the header
+    // value that announces it has to go with them.
+    if (stats.deferLoadingStripped) headers = dropBetaValues(headers, /tool[-_]search/i);
 
     // Start the keepalive clock now, not when upstream answers — see startEarlyPing.
     const early =

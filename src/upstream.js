@@ -35,6 +35,33 @@ const HOP_BY_HOP = new Set([
   'content-length',
 ]);
 
+/**
+ * Remove one capability's values from the `anthropic-beta` header.
+ *
+ * Beta body fields travel paired with a beta header value, and Anthropic's gateway
+ * protocol reference is explicit that splitting the pair is what produces hard 400s —
+ * "only when both halves are absent together does the feature turn off quietly". So a
+ * proxy that drops `defer_loading` from the tool schemas must drop the matching beta
+ * value too, rather than leaving the upstream told about a capability whose field is
+ * no longer there.
+ */
+export function dropBetaValues(headers, pattern) {
+  const key = Object.keys(headers ?? {}).find((k) => k.toLowerCase() === 'anthropic-beta');
+  if (!key) return headers;
+
+  const kept = String(headers[key])
+    .split(',')
+    .map((v) => v.trim())
+    .filter((v) => v && !pattern.test(v));
+
+  if (kept.length === String(headers[key]).split(',').length) return headers;
+
+  const out = { ...headers };
+  if (kept.length) out[key] = kept.join(',');
+  else delete out[key];
+  return out;
+}
+
 export function forwardableHeaders(headers, extra = {}) {
   const out = {};
   for (const [key, value] of Object.entries(headers ?? {})) {

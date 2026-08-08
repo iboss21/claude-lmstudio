@@ -21,9 +21,15 @@ API Error: 400 request.messages.461.content.0.content.0.type: Invalid literal va
 API Error: 400 Only text tool_result blocks are supported when tool_result.content is an array.
 ```
 
-Both are the **same rule**, worded differently by different LM Studio builds:
+Both enforce the same rule:
 
 > When `tool_result.content` is an array, LM Studio only accepts blocks of type `"text"`.
+
+The prose form is quoted from LM Studio's own server log in their bug tracker
+(0.4.12 and 0.4.15, both still open). The JSON-path form came out of a 0.4.20 server
+log directly — but it has no other public LM Studio attestation, and the identical
+string has been reported against Anthropic's own API, so treat the two as enforcing
+one rule rather than as interchangeable LM Studio signatures.
 
 Claude Code legitimately puts other block types in there. Two hit constantly:
 
@@ -41,9 +47,24 @@ finds tools, it returns them as structured references:
 **2. `image` — from screenshot tools.** `Claude Browser: preview screenshot` returns
 the PNG inside the `tool_result`.
 
-Anthropic's Messages API defines both as valid there. LM Studio's schema does not
-implement them — so LM Studio is the party out of spec, and Claude Code cannot be
-configured around it.
+Anthropic's current Messages API schema lists `tool_reference` in the
+`tool_result.content` union, and LM Studio implements a strictly narrower subset.
+
+That is not the whole story, though, and the honest version matters because it
+changes what you should do:
+
+- Anthropic's own API rejected the identical block nine days after tool search went
+  GA, and their tool-result page still enumerates only `text`, `image`, `document`
+  and `search_result`. Two live Anthropic pages disagree with each other.
+- Claude Code is **documented not to emit these blocks against a non-first-party
+  base URL** — it "disables tool search when `ANTHROPIC_BASE_URL` points to a
+  non-first-party host, since most proxies don't forward `tool_reference` blocks."
+- Claude Code emitting them against a third-party gateway anyway is tracked as a
+  Claude Code defect, whose own proposed fix is converting `tool_reference` blocks
+  to text — which is what this proxy does.
+
+So: **there is a client setting that stops this** (see the next section), and the
+proxy exists for the cases that setting cannot reach.
 
 ### Why it looks like it "worked before, then broke forever"
 
@@ -103,8 +124,16 @@ On the CLI the equivalents are leaving `ENABLE_TOOL_SEARCH` unset, or setting
 - **`count_tokens`.** Still answered by LM Studio with a bogus `200`.
 - **The 300-second stream watchdog.** Still aborts on long prompt-processing pauses.
 
-If you only ever hit the `tool_reference` error, the config change is the whole
-fix and you can stop reading here.
+### Raise your context window before you do this
+
+Turning tool search off means all ~30 tool schemas load upfront on every request —
+roughly **14–16k tokens of context instead of ~1k**. LM Studio's default context
+length has been 8k since 0.4.16 Build 2, so on a default setup this trades one hard
+failure for another. Load the model with 32k+ first (`--preload` below does it, or
+set it in the model's load config).
+
+If you only ever hit the `tool_reference` error and your context window is large
+enough, the config change is the whole fix and you can stop reading here.
 
 ---
 
@@ -116,10 +145,23 @@ cd claude-lmstudio
 node bin/claude-lmstudio.js --upstream http://127.0.0.1:1234
 ```
 
-Then point Claude Code at the proxy instead of LM Studio.
+Then point Claude Code at the proxy instead of LM Studio. **The two surfaces are
+configured differently — they are not interchangeable.**
 
-**Claude Code desktop:** Developer → Configure Third-Party Inference → base URL
-`http://localhost:2140`.
+**Claude Code desktop (3P).** Environment variables are *not* read for inference on
+this surface, so `ANTHROPIC_BASE_URL` does nothing. Use Help → Troubleshooting →
+Enable Developer Mode → Developer → Configure Third-Party Inference, which writes:
+
+```
+inferenceProvider:       gateway
+inferenceGatewayBaseUrl: http://localhost:2140
+inferenceGatewayApiKey:  lm-studio          # placeholder; LM Studio has no auth
+inferenceGatewayAuthScheme: bearer
+inferenceModels:         <your full model id>
+```
+
+Set `inferenceModels` explicitly so the app skips model discovery — an unreachable
+or slow `/v1/models` delays launch by up to 10 seconds.
 
 **Claude Code CLI (PowerShell):**
 
@@ -159,7 +201,7 @@ curl http://localhost:2140/health
 | `tool_result.content` as a plain string | fine | untouched |
 | `tool_result.content` as an empty array | invalid | becomes `(no output)` |
 | `tools[].input_schema` with `maxLength: 524288` | grammar compiler blows up | clamps bounds under llama.cpp's ~100k repetition limit |
-| `tools[].defer_loading: true` | meaningless | stripped |
+| `tools[].defer_loading: true` | meaningless | stripped, together with its paired `anthropic-beta` value |
 | `$schema: "…draft/2020-12/schema"` | can confuse the grammar converter | stripped |
 | `role: "system"` inside `messages[]` | accepted on desktop 0.4.15+ | left alone by default (`--system-messages hoist` for headless `llmster`) |
 | orphaned `tool_use` with no result | confuses the model | synthesizes a stub result |
@@ -349,7 +391,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 96 tests, no network, no LM Studio required
+npm test          # 97 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

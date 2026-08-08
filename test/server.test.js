@@ -601,3 +601,62 @@ test('a non-streaming request is never converted into a stream', async (t) => {
   assert.equal(res.status, 200);
   assert.equal(res.json.content[0].text, 'ok');
 });
+
+test('the tool-search beta value is dropped along with defer_loading', async (t) => {
+  // Beta body fields pair with a beta header value, and Anthropic's gateway protocol
+  // reference is explicit that splitting the pair is what produces hard 400s.
+  let seenBeta;
+  const upstream = http.createServer((req, res) => {
+    seenBeta = req.headers['anthropic-beta'];
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'm', role: 'assistant', content: [{ type: 'text', text: 'ok' }] }));
+    });
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => upstream.close());
+
+  const config = resolveConfig(
+    ['--port', '0', '--upstream', `http://127.0.0.1:${upstream.address().port}`, '--log-level', 'silent'],
+    {}
+  );
+  const proxy = createServer(config);
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  t.after(() => proxy.close());
+
+  const payload = Buffer.from(
+    JSON.stringify({
+      model: 'local-model',
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ name: 'Write', defer_loading: true, input_schema: { type: 'object' } }],
+    })
+  );
+  await new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: proxy.address().port,
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': payload.length,
+          'anthropic-beta': 'context-management-2025-06-27,tool-search-tool-2025-10-19',
+        },
+      },
+      (r) => {
+        r.resume();
+        r.on('end', resolve);
+      }
+    );
+    req.on('error', reject);
+    req.end(payload);
+  });
+
+  assert.ok(!/tool-search/.test(seenBeta ?? ''), `tool-search beta should be gone, got "${seenBeta}"`);
+  assert.match(seenBeta, /context-management/, 'unrelated beta values must survive');
+});

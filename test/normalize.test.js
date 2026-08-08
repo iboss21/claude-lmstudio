@@ -197,7 +197,8 @@ test('defer_loading is stripped from tool definitions', () => {
 });
 
 test('both tool_reference field spellings are understood', () => {
-  // tool_result/tool-search context uses `tool_name`; tool_addition/tool_removal uses `name`.
+  // The documented field is `tool_name`. Accepting `name` as well is defensive parsing
+  // for a second spelling seen in the wild — not a documented variant.
   const { body } = normalizeRequest({
     model: 'local',
     max_tokens: 10,
