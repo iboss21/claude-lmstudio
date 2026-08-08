@@ -214,3 +214,74 @@ test('both tool_reference field spellings are understood', () => {
 
   assert.deepEqual(body.messages[1].content[0].content, [{ type: 'text', text: 'Tool loaded: Bash' }]);
 });
+
+test('an unanswered parallel tool_use still gets a result', () => {
+  // Claude Code issues several tool_use blocks in one assistant turn. If compaction
+  // drops one of the results, the following user turn still carries the others — which
+  // must not be mistaken for "this call was answered".
+  const { body } = normalizeRequest({
+    model: 'local',
+    max_tokens: 10,
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'go' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'a', name: 'Read', input: {} },
+          { type: 'tool_use', id: 'b', name: 'Grep', input: {} },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ok' }] },
+    ],
+  });
+
+  const calls = new Set();
+  const answers = new Set();
+  for (const m of body.messages) {
+    if (!Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      if (b.type === 'tool_use') calls.add(b.id);
+      if (b.type === 'tool_result') answers.add(b.tool_use_id);
+    }
+  }
+
+  assert.deepEqual([...calls].filter((id) => !answers.has(id)), [], 'no orphaned tool_use');
+});
+
+test('the synthesized result merges into the existing turn instead of adding one', () => {
+  const { body } = normalizeRequest({
+    model: 'local',
+    max_tokens: 10,
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'go' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'a', name: 'Read', input: {} },
+          { type: 'tool_use', id: 'b', name: 'Grep', input: {} },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ok' }] },
+    ],
+  });
+
+  assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+  // Both results lead the turn, as the Messages API requires.
+  assert.deepEqual(body.messages[2].content.map((b) => b.type), ['tool_result', 'tool_result']);
+});
+
+test('tool_result blocks always lead a user turn after normalization', () => {
+  const { body } = normalizeRequest(fixture());
+
+  for (const message of body.messages) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
+    const types = message.content.map((b) => b.type);
+    const lastToolResult = types.lastIndexOf('tool_result');
+    if (lastToolResult === -1) continue;
+    const firstOther = types.findIndex((t) => t !== 'tool_result');
+    assert.ok(
+      firstOther === -1 || firstOther > lastToolResult,
+      `tool_result must lead the turn, got ${types.join(',')}`
+    );
+  }
+});

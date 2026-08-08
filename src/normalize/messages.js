@@ -119,10 +119,24 @@ export function repairToolPairing(messages, stats = {}) {
 
   const out = [];
   let modified = false;
+  // Stub tool_results owed to the previous assistant turn. They are prepended to the
+  // next user turn, because tool_result blocks must lead a user turn.
+  let pendingStubs = [];
+
+  const flushPending = (message) => {
+    if (!pendingStubs.length) return message;
+    const content = Array.isArray(message.content)
+      ? message.content
+      : [{ type: 'text', text: String(message.content ?? '') }];
+    const merged = { ...message, content: [...pendingStubs, ...content] };
+    pendingStubs = [];
+    return merged;
+  };
+
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (!Array.isArray(message?.content)) {
-      out.push(message);
+      out.push(message?.role === 'user' ? flushPending(message) : message);
       continue;
     }
 
@@ -147,32 +161,36 @@ export function repairToolPairing(messages, stats = {}) {
       modified = true;
     }
 
-    out.push(touched ? { ...message, content } : message);
+    const staged = touched ? { ...message, content } : message;
+    out.push(message.role === 'user' ? flushPending(staged) : staged);
 
-    // Synthesize results for calls that were never answered.
+    // Synthesize results for calls that were never answered anywhere in the history.
+    // `answered` already spans every message, so an id missing from it has no result —
+    // the following turn answering *other* calls does not make this one answered, which
+    // is exactly the parallel-tool-call case.
     if (message.role !== 'assistant') continue;
     const unanswered = content.filter((b) => b?.type === 'tool_use' && !answered.has(b.id));
     if (!unanswered.length) continue;
 
-    const next = messages[i + 1];
-    const nextAnswers =
-      next?.role === 'user' &&
-      Array.isArray(next.content) &&
-      next.content.some((b) => b?.type === 'tool_result');
-    if (nextAnswers) continue;
-
     stats.stubResultsAdded = (stats.stubResultsAdded ?? 0) + unanswered.length;
     modified = true;
-    out.push({
-      role: 'user',
-      content: unanswered.map((b) => ({
-        type: 'tool_result',
-        tool_use_id: b.id,
-        content: '[no result recorded]',
-        is_error: true,
-      })),
-    });
+    const stubs = unanswered.map((b) => ({
+      type: 'tool_result',
+      tool_use_id: b.id,
+      content: '[no result recorded]',
+      is_error: true,
+    }));
+
+    if (messages[i + 1]?.role === 'user') {
+      // Merge into the existing user turn rather than inserting one, which would
+      // create two consecutive user messages.
+      pendingStubs = stubs;
+    } else {
+      out.push({ role: 'user', content: stubs });
+    }
   }
+
+  if (pendingStubs.length) out.push({ role: 'user', content: pendingStubs });
 
   return modified ? out : messages;
 }

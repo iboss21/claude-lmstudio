@@ -3,7 +3,7 @@ import http from 'node:http';
 import { normalizeRequest, summarizeStats } from './normalize/index.js';
 import { normalizerOptions, COMMON_UPSTREAM_PORTS } from './config.js';
 import { sendUpstream, readAll, forwardableHeaders } from './upstream.js';
-import { pipeSse, isEventStream } from './stream.js';
+import { pipeSse, isEventStream, startEarlyPing, writeSseError } from './stream.js';
 import { countRequestTokens, TokenCalibrator } from './tokenizer.js';
 import { repairFromError, extractErrorMessage } from './repair.js';
 import { makeContextGuard } from './preload.js';
@@ -78,10 +78,21 @@ export function createServer(config) {
 
     const headers = forwardableHeaders(req.headers, { 'content-type': 'application/json' });
 
+    // Start the keepalive clock now, not when upstream answers — see startEarlyPing.
+    const early =
+      normalized.stream === true && config.earlyPingAfterMs > 0
+        ? startEarlyPing(res, {
+            delayMs: config.earlyPingAfterMs,
+            intervalMs: config.pingIntervalMs,
+          })
+        : null;
+
     let current = normalized;
     let attempts = 0;
     let lastRepairHoisted = 0;
     const repairs = [];
+
+    try {
 
     for (;;) {
       const payload = Buffer.from(JSON.stringify(current), 'utf8');
@@ -98,13 +109,11 @@ export function createServer(config) {
         });
       } catch (err) {
         log.error(`cannot reach LM Studio at ${config.upstream}: ${err.message}`);
-        anthropicError(
-          res,
-          502,
-          'api_error',
+        const detail =
           `claude-lmstudio could not reach LM Studio at ${config.upstream} (${err.message}). ` +
-            `Is the server running, and is --upstream pointing at the right port?`
-        );
+          `Is the server running, and is --upstream pointing at the right port?`;
+        if (early?.committed) writeSseError(res, detail);
+        else anthropicError(res, 502, 'api_error', detail);
         return;
       }
 
@@ -114,8 +123,13 @@ export function createServer(config) {
         const extra = repairs.length ? { 'x-claude-lmstudio-repairs': String(repairs.length) } : {};
 
         if (isEventStream(upstream.headers)) {
-          for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
-          const { usage } = await pipeSse(upstream, res, { pingIntervalMs: config.pingIntervalMs });
+          const committed = early?.committed ?? false;
+          early?.stop();
+          if (!committed) for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
+          const { usage } = await pipeSse(upstream, res, {
+            pingIntervalMs: config.pingIntervalMs,
+            headersSent: committed,
+          });
           if (config.calibrate && usage?.input_tokens) {
             const estimate = countRequestTokens(current, { charsPerToken: config.charsPerToken });
             calibrator.record(estimate, usage.input_tokens);
@@ -127,6 +141,17 @@ export function createServer(config) {
         }
 
         const buffered = await readAll(upstream);
+        if (early?.committed) {
+          // We promised an event stream and upstream answered with something else.
+          early.stop();
+          log.error('upstream returned a non-streaming success after the stream was committed');
+          writeSseError(
+            res,
+            'claude-lmstudio committed to a streaming response but LM Studio replied without one. ' +
+              'Raise --early-ping-after or disable it with --early-ping-after 0.'
+          );
+          return;
+        }
         if (config.calibrate) {
           try {
             const usage = JSON.parse(buffered.toString('utf8'))?.usage;
@@ -178,6 +203,14 @@ export function createServer(config) {
           }
         }
 
+        early?.stop();
+        if (early?.committed) {
+          // Headers are already out as a 200 stream. Preserve the upstream's exact
+          // wording, which is what Claude Code's retry logic matches on.
+          writeSseError(res, message, 'invalid_request_error');
+          return;
+        }
+
         res.writeHead(status, {
           ...Object.fromEntries(
             Object.entries(upstream.headers).filter(([k]) => k !== 'transfer-encoding')
@@ -196,6 +229,9 @@ export function createServer(config) {
         `upstream 400 (${message}) — ${repair.description}; retrying (${attempts}/${config.maxRepairAttempts})`
       );
       current = repair.body;
+    }
+    } finally {
+      early?.stop();
     }
   }
 

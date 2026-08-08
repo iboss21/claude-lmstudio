@@ -98,9 +98,50 @@ test('hoisted images are re-attached to the enclosing message', () => {
   );
 
   assert.equal(changed, true);
-  assert.deepEqual(content.map((b) => b.type), ['tool_result', 'image', 'text']);
+  assert.deepEqual(content.map((b) => b.type), ['tool_result', 'text', 'image']);
   assert.equal(stats.imagesHoisted, 1);
   assert.equal(stats.toolResultsRewritten, 1);
+});
+
+test('a hoisted image never lands in front of a later tool_result', () => {
+  // Claude Code runs tools in parallel, so a single user turn routinely carries
+  // several tool_results and a screenshot may be in the first of them. The Messages
+  // API requires tool_result blocks to lead the turn, so the image must go last.
+  const image = {
+    type: 'image',
+    source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+  };
+  const { content } = normalizeContentBlocks(
+    [
+      { type: 'tool_result', tool_use_id: 'a', content: [{ type: 'text', text: 'shot' }, image] },
+      { type: 'tool_result', tool_use_id: 'b', content: 'plain ok' },
+    ],
+    {},
+    {}
+  );
+
+  assert.deepEqual(content.map((b) => b.type), ['tool_result', 'tool_result', 'image']);
+  const firstNonToolResult = content.findIndex((b) => b.type !== 'tool_result');
+  const lastToolResult = content.map((b) => b.type).lastIndexOf('tool_result');
+  assert.ok(firstNonToolResult > lastToolResult, 'all tool_results must precede other blocks');
+});
+
+test('images from several tool_results are all preserved, in order', () => {
+  const img = (data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } });
+  const { content } = normalizeContentBlocks(
+    [
+      { type: 'tool_result', tool_use_id: 'a', content: [img('one')] },
+      { type: 'tool_result', tool_use_id: 'b', content: [img('two')] },
+    ],
+    {},
+    {}
+  );
+
+  assert.deepEqual(content.map((b) => b.type), ['tool_result', 'tool_result', 'image', 'image']);
+  assert.deepEqual(
+    content.filter((b) => b.type === 'image').map((b) => b.source.data),
+    ['one', 'two']
+  );
 });
 
 test('describeBlock renders each known type without throwing', () => {

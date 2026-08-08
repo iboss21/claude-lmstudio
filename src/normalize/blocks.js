@@ -187,6 +187,7 @@ export function normalizeContentBlocks(content, opts = {}, stats = {}) {
 
   let changed = false;
   const out = [];
+  const hoisted = [];
 
   for (const block of content) {
     if (block == null || typeof block !== 'object') {
@@ -208,11 +209,16 @@ export function normalizeContentBlocks(content, opts = {}, stats = {}) {
     changed = true;
     stats.toolResultsRewritten = (stats.toolResultsRewritten ?? 0) + 1;
     out.push({ ...block, content: result.content });
+    hoisted.push(...result.hoisted);
+  }
 
-    for (const image of result.hoisted) {
-      stats.imagesHoisted = (stats.imagesHoisted ?? 0) + 1;
-      out.push(image);
-    }
+  // Hoisted images go at the END of the turn, never immediately after the block they
+  // came from. Claude Code runs tools in parallel, so one user turn routinely carries
+  // several tool_results, and the Messages API requires tool_result blocks to lead the
+  // turn — splicing an image between two of them produces an invalid request.
+  for (const image of hoisted) {
+    stats.imagesHoisted = (stats.imagesHoisted ?? 0) + 1;
+    out.push(image);
   }
 
   return { content: changed ? out : content, changed };

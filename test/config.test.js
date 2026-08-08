@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveConfig, DEFAULTS, normalizerOptions } from '../src/config.js';
+import { resolveConfig, DEFAULTS, normalizerOptions, HELP } from '../src/config.js';
 
 test('defaults are used when nothing is supplied', () => {
   const config = resolveConfig([], {});
@@ -63,4 +63,27 @@ test('max_tokens is clamped only when a ceiling is configured', async () => {
     normalizeRequest({ ...body, max_tokens: 4_000 }, { maxOutputTokens: 8_000 }).body.max_tokens,
     4_000
   );
+});
+
+test('every flag documented in --help is actually accepted', () => {
+  // `--ping-interval` shipped documented but unparseable, because the config key is
+  // `pingIntervalMs` and the flag camel-cased to `pingInterval`. Parse the help text
+  // and prove each flag resolves, so a documented-but-dead flag cannot recur.
+
+  const flags = [...new Set([...HELP.matchAll(/^\s+(--[a-z0-9-]+)/gm)].map((m) => m[1]))];
+
+  assert.ok(flags.length > 15, `expected to find the flag list, found ${flags.length}`);
+
+  const broken = [];
+  for (const flag of flags) {
+    if (flag === '--help') continue;
+    try {
+      // A value is supplied for flags that need one; booleans ignore the extra arg.
+      resolveConfig([flag, '1'], {});
+    } catch (err) {
+      if (/unknown option/.test(err.message)) broken.push(`${flag}: ${err.message}`);
+    }
+  }
+
+  assert.deepEqual(broken, [], `documented flags that do not resolve:\n${broken.join('\n')}`);
 });

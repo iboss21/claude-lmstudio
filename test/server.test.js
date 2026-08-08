@@ -12,13 +12,16 @@ import { resolveConfig } from '../src/config.js';
  * may only contain `text` blocks. Both of the error shapes LM Studio has shipped are
  * reproducible so the proxy is tested against each.
  */
-function fakeLmStudio({ errorStyle = 'zod', rejectUnknownParam = null, alwaysReject = null } = {}) {
+function fakeLmStudio({ errorStyle = 'zod', rejectUnknownParam = null, alwaysReject = null, stallMs = 0 } = {}) {
   const seen = [];
 
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
+      // `stallMs` models LM Studio holding its response headers while it ingests a
+      // large prompt — the window in which the client's 300s watchdog runs.
+      const respond = () => {
       const path = req.url.split('?')[0];
 
       if (path === '/v1/models') {
@@ -99,6 +102,9 @@ function fakeLmStudio({ errorStyle = 'zod', rejectUnknownParam = null, alwaysRej
           usage: { input_tokens: 4242, output_tokens: 2 },
         })
       );
+      };
+      if (stallMs > 0) setTimeout(respond, stallMs);
+      else respond();
     });
   });
 
@@ -121,8 +127,8 @@ function findIllegalToolResult(body) {
   return null;
 }
 
-async function withStack(t, { errorStyle, rejectUnknownParam, alwaysReject, proxyArgs = [] } = {}) {
-  const upstream = fakeLmStudio({ errorStyle, rejectUnknownParam, alwaysReject });
+async function withStack(t, { errorStyle, rejectUnknownParam, alwaysReject, stallMs, proxyArgs = [] } = {}) {
+  const upstream = fakeLmStudio({ errorStyle, rejectUnknownParam, alwaysReject, stallMs });
   upstream.server.listen(0, '127.0.0.1');
   await once(upstream.server, 'listening');
   const upstreamPort = upstream.server.address().port;
@@ -515,4 +521,83 @@ test('the same history keeps working as the conversation grows past it', async (
 
   assert.equal(seen.length, 3);
   for (const body of seen) assert.equal(findIllegalToolResult(body), null);
+});
+
+test('keepalive pings reach the client while upstream is still silent', async (t) => {
+  // The failure this guards against: LM Studio holds its SSE headers until the first
+  // generated token, so a proxy that only pings after upstream responds sends nothing
+  // during prompt ingestion — and Claude Code aborts a stream silent for 300 seconds.
+  const { proxyPort } = await withStack(t, {
+    stallMs: 400,
+    proxyArgs: ['--early-ping-after', '80', '--ping-interval', '40'],
+  });
+
+  const res = await post(proxyPort, '/v1/messages', { ...POISON_REQUEST, stream: true }, { raw: true });
+
+  assert.equal(res.status, 200);
+  assert.match(res.headers['content-type'], /text\/event-stream/);
+
+  const firstPing = res.text.indexOf('event: ping');
+  const firstReal = res.text.indexOf('event: message_start');
+  assert.ok(firstPing !== -1, 'expected at least one ping frame');
+  assert.ok(firstReal !== -1, 'expected the real stream to follow');
+  assert.ok(firstPing < firstReal, 'pings must arrive before upstream sends anything');
+  assert.match(res.text, /event: message_stop/);
+});
+
+test('a fast validation error is still a real HTTP 400, not a committed stream', async (t) => {
+  // Only genuinely slow requests should be converted into a committed stream. LM Studio
+  // returns validation errors in milliseconds, so those must keep their status code —
+  // Claude Code's retry logic reads both the status and the wording.
+  const message = 'Only text tool_result blocks are supported when tool_result.content is an array.';
+  const { proxyPort } = await withStack(t, {
+    alwaysReject: message,
+    proxyArgs: ['--early-ping-after', '5000'],
+  });
+
+  const res = await post(proxyPort, '/v1/messages', { ...POISON_REQUEST, stream: true }, { raw: true });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.text, JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message } }));
+});
+
+test('an error after the stream is committed keeps the upstream wording', async (t) => {
+  const message = 'Model context length exceeded (39132 > 32768)';
+  const { proxyPort } = await withStack(t, {
+    alwaysReject: message,
+    stallMs: 300,
+    proxyArgs: ['--early-ping-after', '60', '--ping-interval', '40'],
+  });
+
+  const res = await post(proxyPort, '/v1/messages', { ...POISON_REQUEST, stream: true }, { raw: true });
+
+  assert.equal(res.status, 200, 'headers were already sent as a stream');
+  assert.match(res.text, /event: ping/);
+  assert.match(res.text, /event: error/);
+  assert.ok(res.text.includes(message), 'the upstream wording must survive verbatim');
+});
+
+test('early ping can be turned off', async (t) => {
+  const { proxyPort } = await withStack(t, {
+    stallMs: 200,
+    proxyArgs: ['--early-ping-after', '0'],
+  });
+
+  const res = await post(proxyPort, '/v1/messages', { ...POISON_REQUEST, stream: true }, { raw: true });
+
+  assert.equal(res.status, 200);
+  assert.ok(!res.text.startsWith('event: ping'), 'no ping should precede the upstream stream');
+  assert.match(res.text, /event: message_start/);
+});
+
+test('a non-streaming request is never converted into a stream', async (t) => {
+  const { proxyPort } = await withStack(t, {
+    stallMs: 300,
+    proxyArgs: ['--early-ping-after', '50'],
+  });
+
+  const res = await post(proxyPort, '/v1/messages', POISON_REQUEST);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.json.content[0].text, 'ok');
 });

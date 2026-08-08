@@ -165,7 +165,7 @@ curl http://localhost:2140/health
 | orphaned `tool_use` with no result | confuses the model | synthesizes a stub result |
 | orphaned `tool_result` with no call | confuses the model | demotes it to text |
 | `POST /v1/messages/count_tokens` | **not implemented** | answered locally with a real `{"input_tokens": N}` |
-| streaming, minutes of silence during prompt processing | connection looks dead | injects SSE `ping` frames every 10s |
+| streaming, minutes of silence during prompt processing | connection looks dead, client aborts at 300s | commits the stream after 20s of upstream silence and pings every 10s |
 
 Every transformation is a no-op when there is nothing to do — a request that already
 validates is forwarded byte-identical, so the proxy cannot cause its own bugs.
@@ -214,10 +214,20 @@ Pings every 10s keep the byte counter moving. The same page requires that respon
 stream rather than buffer, which is why the proxy relays chunks straight through and
 only ever inserts a ping at an event boundary.
 
-Timing works out because LM Studio opens the SSE response *before* it starts prompt
-processing (its log prints `Streaming response…` ahead of `Prompt processing
-progress: 0.0%`), so the proxy is already relaying a live stream during the silent
-window. If you still trip a watchdog, `--ping-interval 5000` tightens it.
+The subtle part is *when* pinging can start. A proxy can only relay pings once the
+upstream has flushed its own response headers — so if LM Studio withholds them until
+the first generated token, nothing reaches the client during ingestion and the
+watchdog fires anyway. LM Studio's log prints `Streaming response…` ahead of
+`Prompt processing progress: 0.0%`, which suggests it flushes early, but a log line
+is not proof that headers hit the socket.
+
+So the proxy does not rely on it. After `--early-ping-after` milliseconds of upstream
+silence (default 20000) it commits to the SSE response itself and starts pinging.
+The delay is what keeps this safe: LM Studio returns validation errors in
+milliseconds, so real `400`s still reach Claude Code as proper HTTP errors with their
+status and wording intact, and only a genuinely slow request is ever converted into a
+committed stream. If upstream then fails, the error is delivered as an SSE `error`
+event carrying the upstream's exact message. `--early-ping-after 0` disables it.
 
 ### Self-healing
 
@@ -261,6 +271,8 @@ the session. Turn it off with `--no-auto-repair`; see what it caught with
 --api-token <token>        Bearer token for LM Studio's native REST API
 
 --ping-interval <ms>       SSE keepalive interval, 0 disables (default 10000)
+--early-ping-after <ms>    Commit the stream and ping after this much upstream
+                           silence, 0 disables               (default 20000)
 --log-level <level>        silent | error | warn | info | debug
 --dump-dir <path>          Write failing requests here for inspection
 ```
@@ -337,7 +349,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 79 tests, no network, no LM Studio required
+npm test          # 90 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

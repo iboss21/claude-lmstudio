@@ -6,6 +6,9 @@ export const DEFAULTS = {
   port: 2140,
   upstream: 'http://127.0.0.1:1234',
   pingIntervalMs: 10_000,
+  // Commit to the SSE response after this long without upstream headers, so prompt
+  // ingestion cannot look like a dead connection. 0 disables.
+  earlyPingAfterMs: 20_000,
   logLevel: 'info',
   dumpDir: null,
   autoRepair: true,
@@ -41,6 +44,7 @@ export const COMMON_UPSTREAM_PORTS = [1234, 2126, 8080, 11434];
 const NUMERIC = new Set([
   'port',
   'pingIntervalMs',
+  'earlyPingAfterMs',
   'maxRepairAttempts',
   'charsPerToken',
   'maxStringLength',
@@ -70,6 +74,7 @@ const ENV_MAP = {
   CLAUDE_LMSTUDIO_PORT: 'port',
   CLAUDE_LMSTUDIO_UPSTREAM: 'upstream',
   CLAUDE_LMSTUDIO_PING_INTERVAL: 'pingIntervalMs',
+  CLAUDE_LMSTUDIO_EARLY_PING_AFTER: 'earlyPingAfterMs',
   CLAUDE_LMSTUDIO_LOG_LEVEL: 'logLevel',
   CLAUDE_LMSTUDIO_DUMP_DIR: 'dumpDir',
   CLAUDE_LMSTUDIO_COUNT_TOKENS: 'countTokens',
@@ -80,8 +85,18 @@ const ENV_MAP = {
   CLAUDE_LMSTUDIO_API_TOKEN: 'apiToken',
 };
 
+/**
+ * Flags whose CLI spelling differs from the config key, because the key carries a unit
+ * suffix that would be noise on the command line.
+ */
+const FLAG_ALIASES = {
+  pingInterval: 'pingIntervalMs',
+  earlyPingAfter: 'earlyPingAfterMs',
+};
+
 function camel(flag) {
-  return flag.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  const key = flag.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  return FLAG_ALIASES[key] ?? key;
 }
 
 function coerce(key, value) {
@@ -212,6 +227,8 @@ claude-lmstudio — compatibility proxy between Claude Code and LM Studio
 
   Diagnostics
     --ping-interval <ms>       SSE keepalive interval, 0 disables (default 10000)
+    --early-ping-after <ms>    Commit the stream and ping after this much upstream
+                               silence, 0 disables                (default 20000)
     --log-level <level>        silent | error | warn | info | debug
     --dump-dir <path>          Write failing requests here for inspection
     --help                     Show this message

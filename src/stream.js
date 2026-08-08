@@ -37,9 +37,10 @@ export function isEventStream(headers) {
 export function pipeSse(upstreamRes, clientRes, opts = {}) {
   const pingIntervalMs = opts.pingIntervalMs ?? 10_000;
 
-  const headers = { ...SSE_HEADERS };
-  clientRes.writeHead(upstreamRes.statusCode ?? 200, headers);
-  if (typeof clientRes.flushHeaders === 'function') clientRes.flushHeaders();
+  if (!opts.headersSent) {
+    clientRes.writeHead(upstreamRes.statusCode ?? 200, { ...SSE_HEADERS });
+    if (typeof clientRes.flushHeaders === 'function') clientRes.flushHeaders();
+  }
 
   return new Promise((resolve) => {
     let atEventBoundary = true;
@@ -119,6 +120,50 @@ export function pipeSse(upstreamRes, clientRes, opts = {}) {
       finish();
     });
   });
+}
+
+/**
+ * Keep the connection alive while LM Studio is still ingesting the prompt.
+ *
+ * The relay above can only ping once upstream has flushed its response headers. If
+ * LM Studio withholds them until the first generated token, nothing reaches the client
+ * during prompt ingestion — and Claude Code aborts a stream that stays silent for 300
+ * seconds. Rather than depend on when LM Studio happens to flush, this commits to the
+ * SSE response itself after `delayMs` and starts pinging.
+ *
+ * The delay matters: LM Studio returns validation errors in milliseconds, so a delay of
+ * seconds means real `400`s still reach the client as proper HTTP errors, and only a
+ * genuinely slow request is ever converted into a committed stream.
+ *
+ * @returns {{ committed: boolean, stop: () => void }}
+ */
+export function startEarlyPing(clientRes, { delayMs, intervalMs }) {
+  let committed = false;
+  let interval = null;
+
+  const timer = setTimeout(() => {
+    if (clientRes.writableEnded || clientRes.headersSent) return;
+    committed = true;
+    clientRes.writeHead(200, { ...SSE_HEADERS });
+    if (typeof clientRes.flushHeaders === 'function') clientRes.flushHeaders();
+    clientRes.write(PING_FRAME);
+    if (intervalMs > 0) {
+      interval = setInterval(() => {
+        if (!clientRes.writableEnded) clientRes.write(PING_FRAME);
+      }, intervalMs);
+    }
+  }, delayMs);
+
+  return {
+    get committed() {
+      return committed;
+    },
+    stop() {
+      clearTimeout(timer);
+      if (interval) clearInterval(interval);
+      interval = null;
+    },
+  };
 }
 
 /** Emit an Anthropic-shaped error as a single SSE frame (for failures after headers are sent). */
