@@ -488,10 +488,28 @@ python3 tools/verify-template.py templates/claude-code-fable5.jinja
 ```
 
 It renders the template against every shape Claude Code actually produces and reports
-two things separately, because they fail differently:
+three things separately, because they fail differently:
 
-- **hard failure** — `raise_exception` fired; the session cannot recover
+- **load risk** — a `raise_exception` exists anywhere in the template
+- **hard failure** — `raise_exception` fired on a shape Claude Code sends
 - **silent drop** — it rendered, but content the model was sent never reached it
+
+The first is the worst and the least obvious. llama.cpp does not merely execute a
+template; it statically analyses it to generate a tool-call parser, and a
+`raise_exception` reachable during that analysis fails the **whole model at load
+time**. That is what happened to this model'''s own base, Ornith-1.0-35B, reported on
+its Unsloth GGUF repo:
+
+> ```
+> Unable to generate parser for this template. Automatic parser generation failed:
+> While executing CallExpression at line 85 …
+> Error: Jinja Exception: System message must be at the beginning.
+> ```
+
+No amount of render testing catches that one, which is why the scan is static. Note
+also what the message says: **"System message must be at the beginning"** — a rule
+Claude Code breaks on essentially every turn, since it interleaves system reminders
+throughout the conversation.
 
 The second is the one that hides. Mid-conversation system messages are the usual
 casualty: a template that only merges `messages[0]` and `messages[1]` drops every

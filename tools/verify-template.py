@@ -118,13 +118,43 @@ CASES = {
 }
 
 
+def scan_raise_exception(source):
+    """
+    Find raise_exception calls, which are a hazard before any message is rendered.
+
+    llama.cpp does not merely execute the template — it statically analyses it to
+    generate a tool-call parser. A raise_exception reachable during that analysis
+    fails the whole model with:
+
+        Unable to generate parser for this template. Automatic parser generation
+        failed: ... Error: Jinja Exception: System message must be at the beginning.
+
+    That is a load-time failure, so no amount of render testing catches it. The only
+    safe number is zero.
+    """
+    hits = []
+    for number, line in enumerate(source.splitlines(), start=1):
+        if "raise_exception" in line and not line.lstrip().startswith("{#"):
+            hits.append((number, line.strip()[:110]))
+    return hits
+
+
 def main(argv):
     if len(argv) < 2:
         sys.exit(f"usage: {argv[0]} <template.jinja>")
     path = argv[1]
 
     with open(path, encoding="utf-8") as handle:
-        template = build_env().from_string(handle.read())
+        source = handle.read()
+
+    raises = scan_raise_exception(source)
+    if raises:
+        print(f"  LOAD RISK  {len(raises)} raise_exception call(s):")
+        for number, text in raises:
+            print(f"             line {number}: {text}")
+        print()
+
+    template = build_env().from_string(source)
 
     hard, dropped = [], []
     for name, (messages, probes) in CASES.items():
@@ -144,15 +174,22 @@ def main(argv):
 
     print()
     print(f"{path}")
-    print(f"  hard failures : {len(hard)}")
-    print(f"  silent drops  : {len(dropped)}")
+    print(f"  raise_exception : {len(raises)}")
+    print(f"  hard failures   : {len(hard)}")
+    print(f"  silent drops    : {len(dropped)}")
 
     if hard:
         print("\nA hard failure is unrecoverable: the block stays in history and every retry raises again.")
     if dropped:
         print("\nA silent drop means the model never sees content Claude Code sent it.")
 
-    return 1 if (hard or dropped) else 0
+    if raises:
+        print(
+            "\nEach raise_exception is a way for this template to fail the model at load\n"
+            "time, before a single message is rendered. Replace them with a fallback."
+        )
+
+    return 1 if (hard or dropped or raises) else 0
 
 
 if __name__ == "__main__":
