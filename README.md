@@ -61,6 +61,12 @@ part of history, **every retry replays it**. The session can never recover, and 
 client keeps re-sending a 39k-token prompt into a local model at ~19 tok/s, which is
 why it presents as a hang rather than a clean error.
 
+The longer-range version of "it used to work": Claude Code **2.1.69** moved the
+built-in tools (Bash, Read, Edit, Write, Glob, Grep, Agent…) behind ToolSearch.
+Before that, only MCP tools were deferred, so a local session with no MCP servers
+never produced a `tool_reference` block at all. The four tools in the failing
+message are all built-ins — no MCP involved.
+
 ---
 
 ## Before you install anything: turn off tool search
@@ -79,10 +85,16 @@ third-party-inference path it is **off by default**:
   `anthropic-beta` headers and the beta tool-schema fields (`defer_loading`,
   `eager_input_streaming`) and forces all tools upfront.
 
-That alone stops new sessions from breaking. It does **not** fix a session that is
-already wedged — the poisoned block is in the history and replays on every retry —
-and it does nothing for the `image`-in-`tool_result` case, the count_tokens gap, or
-the stream watchdogs. Those are what the proxy is for.
+Treat this as worth trying, not as a guarantee. Claude Code is documented to
+auto-disable tool search on a non-first-party base URL, but every doc scopes that
+gate to *MCP* tool search — and the blocks that break here come from **built-in**
+tools, which appear to leak past it. The desktop app is also reported to ignore
+`ENABLE_TOOL_SEARCH` from both the environment and `settings.json`.
+
+Even where it works, it does **not** fix a session that is already wedged — the
+poisoned block is in the history and replays on every retry — and it does nothing
+for the `image`-in-`tool_result` case, the count_tokens gap, or the stream
+watchdogs. Those are what the proxy is for.
 
 ---
 
