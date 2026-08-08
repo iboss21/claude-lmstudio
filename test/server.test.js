@@ -660,3 +660,50 @@ test('the tool-search beta value is dropped along with defer_loading', async (t)
   assert.ok(!/tool-search/.test(seenBeta ?? ''), `tool-search beta should be gone, got "${seenBeta}"`);
   assert.match(seenBeta, /context-management/, 'unrelated beta values must survive');
 });
+
+test('abandoning a request stops the work upstream', async (t) => {
+  // Without this, a client that gives up during prompt ingestion leaves the local
+  // model generating for nobody — minutes of GPU on an answer no one will read.
+  let upstreamAborted = false;
+  const upstream = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      req.on('aborted', () => {
+        upstreamAborted = true;
+      });
+      res.on('close', () => {
+        if (!res.writableEnded) upstreamAborted = true;
+      });
+      // Never respond: model the silent ingestion window.
+    });
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => upstream.close());
+
+  const config = resolveConfig(
+    ['--port', '0', '--upstream', `http://127.0.0.1:${upstream.address().port}`, '--log-level', 'silent', '--early-ping-after', '0'],
+    {}
+  );
+  const proxy = createServer(config);
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  t.after(() => proxy.close());
+
+  const payload = Buffer.from(JSON.stringify({ model: 'm', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] }));
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port: proxy.address().port,
+    path: '/v1/messages',
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': payload.length },
+  });
+  req.on('error', () => {});
+  req.end(payload);
+
+  await new Promise((r) => setTimeout(r, 150));
+  req.destroy();
+  await new Promise((r) => setTimeout(r, 250));
+
+  assert.ok(upstreamAborted, 'upstream request should have been torn down');
+});

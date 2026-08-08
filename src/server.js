@@ -91,6 +91,13 @@ export function createServer(config) {
           })
         : null;
 
+    // If the client walks away while LM Studio is still ingesting, the upstream request
+    // must die with it — otherwise the local model spends minutes generating for nobody.
+    // pipeSse already covers the post-headers case; this covers the silent window before.
+    const aborter = new AbortController();
+    const onClientGone = () => aborter.abort();
+    res.on('close', onClientGone);
+
     let current = normalized;
     let attempts = 0;
     let lastRepairHoisted = 0;
@@ -109,7 +116,7 @@ export function createServer(config) {
           method: 'POST',
           headers,
           body: payload,
-          signal: null,
+          signal: aborter.signal,
         });
       } catch (err) {
         log.error(`cannot reach LM Studio at ${config.upstream}: ${err.message}`);
@@ -239,6 +246,7 @@ export function createServer(config) {
     }
     } finally {
       early?.stop();
+      res.off('close', onClientGone);
     }
   }
 
