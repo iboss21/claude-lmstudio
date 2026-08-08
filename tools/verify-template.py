@@ -20,8 +20,8 @@ Two failure modes matter, and both are silent until a session dies:
                sent 46 of them in one captured session.
 """
 
+import re
 import sys
-import json
 
 try:
     import jinja2
@@ -132,9 +132,19 @@ def scan_raise_exception(source):
     That is a load-time failure, so no amount of render testing catches it. The only
     safe number is zero.
     """
+    # Blank out Jinja comment blocks first, preserving newlines so reported line
+    # numbers stay accurate. A template that documents why it avoids raise_exception
+    # should not be flagged for saying the word.
+    stripped = re.sub(
+        r"\{#.*?#\}",
+        lambda m: re.sub(r"[^\n]", " ", m.group(0)),
+        source,
+        flags=re.DOTALL,
+    )
+
     hits = []
-    for number, line in enumerate(source.splitlines(), start=1):
-        if "raise_exception" in line and not line.lstrip().startswith("{#"):
+    for number, line in enumerate(stripped.splitlines(), start=1):
+        if "raise_exception" in line:
             hits.append((number, line.strip()[:110]))
     return hits
 
