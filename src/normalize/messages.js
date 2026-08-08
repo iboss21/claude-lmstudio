@@ -195,6 +195,41 @@ export function repairToolPairing(messages, stats = {}) {
   return modified ? out : messages;
 }
 
+/**
+ * The Messages API requires every `tool_result` block to appear at the start of its
+ * user turn. Several transformations can break that on their own — hoisting an image
+ * out of the first of several tool_results, demoting an orphaned result to text,
+ * merging a rewritten system turn into the following one — so rather than trusting
+ * each site to be careful, the invariant is restored once at the end.
+ *
+ * The partition is stable, so blocks keep their relative order within each group.
+ */
+export function enforceToolResultOrder(messages, stats = {}) {
+  let modified = false;
+
+  const out = messages.map((message) => {
+    if (message?.role !== 'user' || !Array.isArray(message.content)) return message;
+
+    const content = message.content;
+    const firstOther = content.findIndex((b) => b?.type !== 'tool_result');
+    if (firstOther === -1) return message;
+    const needsSort = content.slice(firstOther).some((b) => b?.type === 'tool_result');
+    if (!needsSort) return message;
+
+    modified = true;
+    stats.turnsReordered = (stats.turnsReordered ?? 0) + 1;
+    return {
+      ...message,
+      content: [
+        ...content.filter((b) => b?.type === 'tool_result'),
+        ...content.filter((b) => b?.type !== 'tool_result'),
+      ],
+    };
+  });
+
+  return modified ? out : messages;
+}
+
 /** Drop messages whose content ended up empty — most backends reject them. */
 export function dropEmptyMessages(messages, stats = {}) {
   const out = messages.filter((m) => !isEmptyContent(m?.content));

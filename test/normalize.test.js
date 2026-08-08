@@ -285,3 +285,62 @@ test('tool_result blocks always lead a user turn after normalization', () => {
     );
   }
 });
+
+/** Assert the Messages API invariant across every user turn in a body. */
+function assertToolResultsLead(body, label) {
+  for (const message of body.messages) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
+    const types = message.content.map((b) => b.type);
+    const lastToolResult = types.lastIndexOf('tool_result');
+    if (lastToolResult === -1) continue;
+    const firstOther = types.findIndex((t) => t !== 'tool_result');
+    assert.ok(
+      firstOther === -1 || firstOther > lastToolResult,
+      `${label}: tool_result must lead the turn, got ${types.join(',')}`
+    );
+  }
+}
+
+test('demoting an orphaned result does not push text ahead of a valid one', () => {
+  const { body } = normalizeRequest({
+    model: 'local',
+    max_tokens: 10,
+    messages: [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'real', name: 'R', input: {} }] },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'gone', content: 'orphan' },
+          { type: 'tool_result', tool_use_id: 'real', content: 'ok' },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(body.messages.at(-1).content.map((b) => b.type), ['tool_result', 'text']);
+  assertToolResultsLead(body, 'demotion');
+});
+
+test('the ordering invariant holds under every system-message mode', () => {
+  for (const systemMessages of ['keep', 'user', 'hoist']) {
+    const { body } = normalizeRequest(fixture(), { systemMessages });
+    assertToolResultsLead(body, `systemMessages=${systemMessages}`);
+  }
+});
+
+test('a system turn rewritten to user never displaces the following tool_results', () => {
+  const { body } = normalizeRequest(
+    {
+      model: 'local',
+      max_tokens: 10,
+      messages: [
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'R', input: {} }] },
+        { role: 'system', content: 'a mid-conversation reminder' },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ok' }] },
+      ],
+    },
+    { systemMessages: 'user' }
+  );
+
+  assertToolResultsLead(body, 'system->user');
+});

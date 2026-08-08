@@ -146,3 +146,23 @@ test('error envelopes are unwrapped in both shapes', () => {
   assert.equal(extractErrorMessage('not json'), 'not json');
   assert.equal(extractErrorMessage(null), null);
 });
+
+test('the guard sweep never splices an image between two tool_results', () => {
+  const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'x' } };
+  const repaired = coerceAllToolResults({
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'a', content: [{ type: 'text', text: 'shot' }, image] },
+          { type: 'tool_result', tool_use_id: 'b', content: 'ok' },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    repaired.body.messages[0].content.map((b) => b.type),
+    ['tool_result', 'tool_result', 'image']
+  );
+});

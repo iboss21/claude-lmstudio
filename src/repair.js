@@ -13,6 +13,7 @@
  */
 
 import { describeBlock, coerceToolResultContent } from './normalize/blocks.js';
+import { enforceToolResultOrder } from './normalize/messages.js';
 
 /**
  * LM Studio states the tool_result rule two different ways depending on version:
@@ -39,6 +40,7 @@ export function coerceAllToolResults(body, opts = {}) {
     if (!Array.isArray(message?.content)) continue;
 
     const next = [];
+    const relocated = [];
     for (const block of message.content) {
       if (block?.type !== 'tool_result') {
         next.push(block);
@@ -62,10 +64,13 @@ export function coerceAllToolResults(body, opts = {}) {
       rewritten += 1;
       hoisted += result.hoisted.length;
       next.push({ ...block, content: result.content });
-      next.push(...result.hoisted);
+      // Appended after the loop, never spliced between two tool_results.
+      relocated.push(...result.hoisted);
     }
-    message.content = next;
+    message.content = [...next, ...relocated];
   }
+
+  clone.messages = enforceToolResultOrder(clone.messages);
 
   if (!rewritten) return null;
   return {

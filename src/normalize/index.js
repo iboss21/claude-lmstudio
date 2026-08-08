@@ -6,6 +6,7 @@ import {
   mergeAdjacentRoles,
   repairToolPairing,
   dropEmptyMessages,
+  enforceToolResultOrder,
 } from './messages.js';
 
 export { sanitizeTools, sanitizeSchema, DEFAULT_LIMITS } from './tools.js';
@@ -21,6 +22,7 @@ export {
   mergeAdjacentRoles,
   repairToolPairing,
   dropEmptyMessages,
+  enforceToolResultOrder,
   normalizeMessageContents,
 } from './messages.js';
 
@@ -79,8 +81,12 @@ export function normalizeRequest(body, options = {}) {
   messages = system.messages;
 
   if (opts.repairToolPairing) messages = repairToolPairing(messages, stats);
-  if (opts.mergeAdjacent) messages = mergeAdjacentRoles(messages, stats);
+  // Dropping runs before merging: removing a message can put two same-role turns
+  // next to each other, and merging afterwards is what collapses them.
   if (opts.dropEmpty) messages = dropEmptyMessages(messages, stats);
+  if (opts.mergeAdjacent) messages = mergeAdjacentRoles(messages, stats);
+  // Last, because merging and demotion can both disturb it.
+  messages = enforceToolResultOrder(messages, stats);
 
   if (messages !== original) out = { ...out, messages };
 
@@ -110,6 +116,7 @@ export function summarizeStats(stats) {
   if (stats.stubResultsAdded) parts.push(`${stats.stubResultsAdded} stub tool_result(s) added`);
   if (stats.orphanResultsDemoted) parts.push(`${stats.orphanResultsDemoted} orphan result(s) demoted`);
   if (stats.emptyMessagesDropped) parts.push(`${stats.emptyMessagesDropped} empty message(s) dropped`);
+  if (stats.turnsReordered) parts.push(`${stats.turnsReordered} turn(s) reordered`);
   if (stats.paramsStripped) parts.push(`${stats.paramsStripped} param(s) stripped`);
   return parts.join(', ');
 }
