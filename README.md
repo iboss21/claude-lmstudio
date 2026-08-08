@@ -69,32 +69,39 @@ message are all built-ins — no MCP involved.
 
 ---
 
-## Before you install anything: turn off tool search
+## Fix the `tool_reference` error without any proxy
 
-The `tool_reference` half of this bug is **self-inflicted and switchable**. Claude
-Code only emits those blocks when deferred tool loading is on, and on the desktop
-third-party-inference path it is **off by default**:
+**Set `toolSearchEnabled` back to `false`.** On Claude Desktop third-party
+inference this key defaults to `false`, so if you are seeing `tool_reference`
+blocks, it was turned on. Anthropic's configuration reference describes it as:
 
-- **Claude Code desktop (3P):** Developer → Configure Third-Party Inference → set
-  `toolSearchEnabled` to `false` (or remove the key). Note that on this entrypoint
-  `ENABLE_TOOL_SEARCH` is *ignored* — `toolSearchEnabled` is the only switch.
-- **Claude Code CLI:** leave `ENABLE_TOOL_SEARCH` unset. It already defaults to off
-  when `ANTHROPIC_BASE_URL` points somewhere non-first-party. Setting it to `true` is
-  what produces these blocks.
-- **CLI, bigger hammer:** `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` strips the
-  `anthropic-beta` headers and the beta tool-schema fields (`defer_loading`,
-  `eager_input_streaming`) and forces all tools upfront.
+> Load MCP tool schemas on demand (tool search) instead of inlining every schema
+> into context. Defaults to `false`.
 
-Treat this as worth trying, not as a guarantee. Claude Code is documented to
-auto-disable tool search on a non-first-party base URL, but every doc scopes that
-gate to *MCP* tool search — and the blocks that break here come from **built-in**
-tools, which appear to leak past it. The desktop app is also reported to ignore
-`ENABLE_TOOL_SEARCH` from both the environment and `settings.json`.
+and documents that enabling it *"causes sessions to send experimental
+`anthropic-beta` request headers to your inference endpoint"* and *"re-enables
+other experimental Claude Code betas (like `context_management`) on 3P
+deployments"* — because Claude Desktop **pins
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` by default on 3P deployments**, and
+`toolSearchEnabled` lifts that suppression.
 
-Even where it works, it does **not** fix a session that is already wedged — the
-poisoned block is in the history and replays on every retry — and it does nothing
-for the `image`-in-`tool_result` case, the count_tokens gap, or the stream
-watchdogs. Those are what the proxy is for.
+Turning it off therefore removes three things at once: the `tool_reference`
+blocks, the `defer_loading` tool field, and the `context_management` body field.
+
+On the CLI the equivalents are leaving `ENABLE_TOOL_SEARCH` unset, or setting
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`.
+
+### What that does not fix
+
+- **A session that is already wedged.** The rejected block is in the conversation
+  history and replays on every retry.
+- **Images in `tool_result`.** Screenshot tools are not tool search, and no client
+  setting stops them.
+- **`count_tokens`.** Still answered by LM Studio with a bogus `200`.
+- **The 300-second stream watchdog.** Still aborts on long prompt-processing pauses.
+
+If you only ever hit the `tool_reference` error, the config change is the whole
+fix and you can stop reading here.
 
 ---
 
@@ -160,26 +167,49 @@ curl http://localhost:2140/health
 Every transformation is a no-op when there is nothing to do — a request that already
 validates is forwarded byte-identical, so the proxy cannot cause its own bugs.
 
+**Upstream errors are forwarded verbatim.** Anthropic's gateway protocol reference
+warns that *"the retry logic matches on the upstream's error wording, so forward error
+response bodies unmodified. A gateway that wraps upstream errors in its own envelope
+breaks the recovery path even when it preserves the status code."* Claude Code uses
+that path to recover from rejections of `thinking`, thinking signatures, and
+mid-conversation system messages — which is why those survived in the captured
+session. There is a test asserting the error body arrives byte-identical.
+
+`defer_loading` is stripped by default because LM Studio receives every tool
+definition anyway. The same reference notes that beta body fields pair with beta
+headers and that splitting a pair can cause `400`s, so `--no-strip-defer-loading`
+forwards it untouched if you need the pairing intact.
+
 ### Token counting matters more than it looks
 
-LM Studio does not implement `/v1/messages/count_tokens`; unknown routes return
-**HTTP 200 with a body that isn't an Anthropic response**. That is worse than a 404,
-because the client cannot tell it failed. Claude Code drives auto-compaction off
-those numbers, so a broken counter means the conversation never compacts and every
-turn gets slower until the whole thing stalls.
+The endpoint is genuinely optional — Anthropic's gateway protocol reference says
+*"Token-counting endpoints are the only optional ones: when they're absent, Claude
+Code estimates context usage locally."* So a clean `404` would be fine.
 
-The proxy answers `count_tokens` itself (with or without the `?beta=true` query the
-official SDKs append) and **self-calibrates**: every completion returns a real
-`usage.input_tokens`, which is compared against the estimate and folded into a moving
-average. The estimate converges on the loaded GGUF's actual tokenizer within a few
-turns. Watch it with `curl localhost:2140/health`.
+What is not fine is what LM Studio actually does: it answers unknown routes with
+**HTTP 200 and a body that isn't an Anthropic response**. The client cannot tell that
+failed, so it never falls back to local estimation.
+
+The same reference also says *"Inference requests post to `/v1/messages?beta=true`,
+so match on the path, not the full URL."* The proxy routes on the parsed pathname and
+answers `count_tokens` in both forms, then **self-calibrates**: every completion
+returns a real `usage.input_tokens`, which is compared against the estimate and folded
+into a moving average, converging on the loaded GGUF's tokenizer within a few turns.
+Watch it with `curl localhost:2140/health`.
 
 ### Why the SSE pings matter
 
-On a custom base URL Claude Code runs two 300-second stream watchdogs that count raw
-bytes received — and **keep-alive pings count**. A local model ingesting a large agent
-context can go quiet for longer than that, and the watchdog aborts the request. Pings
-every 10s keep the byte counter moving.
+From Anthropic's gateway protocol reference:
+
+> Claude Code counts every byte your gateway relays, including SSE `ping` events and
+> comment lines, and aborts a stream that goes silent for 300 seconds by default. The
+> upstream's pings are the only traffic during long thinking pauses, so if your
+> gateway strips or buffers them, Claude Code aborts the stream during those pauses.
+
+A local model ingesting a large agent context can go quiet for longer than 300s.
+Pings every 10s keep the byte counter moving. The same page requires that responses
+stream rather than buffer, which is why the proxy relays chunks straight through and
+only ever inserts a ping at an event boundary.
 
 Timing works out because LM Studio opens the SSE response *before* it starts prompt
 processing (its log prints `Streaming response…` ahead of `Prompt processing
@@ -206,6 +236,7 @@ the session. Turn it off with `--no-auto-repair`; see what it caught with
 --no-coerce-tool-results   Do not rewrite non-text blocks inside tool_result
 --no-hoist-images          Drop images in tool_result instead of re-attaching them
 --no-sanitize-tools        Do not clamp oversized JSON-schema bounds
+--no-strip-defer-loading   Forward the defer_loading tool field unchanged
 --no-repair-tool-pairing   Do not synthesize missing tool_results
 --system-messages <mode>   keep | user | hoist               (default keep)
 --strict-params            Forward only core Anthropic params
@@ -303,7 +334,7 @@ them for you — check them if you still see stalls or truncated replies:
 ## Development
 
 ```bash
-npm test          # 75 tests, no network, no LM Studio required
+npm test          # 77 tests, no network, no LM Studio required
 ```
 
 The suite runs the proxy against a fake LM Studio that enforces the real

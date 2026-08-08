@@ -416,3 +416,30 @@ test('malformed JSON gets an Anthropic-shaped error, not a crash', async (t) => 
   assert.equal(res.status, 400);
   assert.equal(res.json.error.type, 'invalid_request_error');
 });
+
+test('upstream error bodies are forwarded byte-for-byte, never re-wrapped', async (t) => {
+  // Claude Code's automatic-retry recovery matches on the upstream's error WORDING:
+  // it disables the rejected capability and retries after rejections of `thinking`,
+  // thinking signatures, and mid-conversation system messages. A gateway that wraps
+  // upstream errors in its own envelope breaks that recovery even with the right
+  // status code, so the exact bytes have to survive.
+  const message = '`thinking` field is not supported by this model';
+  const { proxyPort } = await withStack(t, { alwaysReject: message });
+  const res = await post(proxyPort, '/v1/messages', POISON_REQUEST, { raw: true });
+
+  assert.equal(res.status, 400);
+  assert.equal(
+    res.text,
+    JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message } })
+  );
+});
+
+test('defer_loading stripping can be turned off to keep the beta pairing intact', async (t) => {
+  const { proxyPort, seen } = await withStack(t, { proxyArgs: ['--no-strip-defer-loading'] });
+  await post(proxyPort, '/v1/messages', {
+    ...POISON_REQUEST,
+    tools: [{ name: 'Write', defer_loading: true, input_schema: { type: 'object' } }],
+  });
+
+  assert.equal(seen[0].tools[0].defer_loading, true);
+});

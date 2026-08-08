@@ -19,6 +19,7 @@ export const DEFAULTS = {
   coerceToolResults: true,
   hoistImages: true,
   sanitizeTools: true,
+  stripDeferLoading: true,
   repairToolPairing: true,
   maxStringLength: DEFAULT_LIMITS.maxStringLength,
   maxNumber: DEFAULT_LIMITS.maxNumber,
@@ -59,6 +60,7 @@ const BOOLEAN = new Set([
   'coerceToolResults',
   'hoistImages',
   'sanitizeTools',
+  'stripDeferLoading',
   'repairToolPairing',
   'flashAttention',
 ]);
@@ -153,6 +155,7 @@ export function normalizerOptions(config) {
     coerceToolResults: config.coerceToolResults,
     hoistImages: config.hoistImages,
     sanitizeTools: config.sanitizeTools,
+    stripDeferLoading: config.stripDeferLoading,
     stripSchemaDialect: true,
     systemMessages: config.systemMessages,
     repairToolPairing: config.repairToolPairing,
@@ -183,6 +186,7 @@ claude-lmstudio — compatibility proxy between Claude Code and LM Studio
     --no-coerce-tool-results   Do not rewrite non-text blocks inside tool_result
     --no-hoist-images          Drop images in tool_result instead of re-attaching them
     --no-sanitize-tools        Do not clamp oversized JSON-schema bounds
+    --no-strip-defer-loading   Forward the defer_loading tool field unchanged
     --no-repair-tool-pairing   Do not synthesize missing tool_results
     --system-messages <mode>   keep | user | hoist               (default keep)
     --strict-params            Forward only core Anthropic params

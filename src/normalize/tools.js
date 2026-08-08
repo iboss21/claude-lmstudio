@@ -91,7 +91,7 @@ export function sanitizeTools(body, opts = {}, stats = {}) {
     // meaningless to LM Studio, which is handed all the definitions anyway, and it is
     // the field that makes Claude Code emit the tool_reference blocks in the first
     // place — so a backend that sees it may reason about deferral it cannot support.
-    if (tool.defer_loading !== undefined) {
+    if (tool.defer_loading !== undefined && opts.stripDeferLoading !== false) {
       const { defer_loading, ...rest } = tool;
       tool = rest;
       stats.deferLoadingStripped = (stats.deferLoadingStripped ?? 0) + 1;
