@@ -467,6 +467,38 @@ them for you — check them if you still see stalls or truncated replies:
 
 ---
 
+## The chat template matters too
+
+LM Studio accepting a request only gets you to the model. The **chat template** then
+has to render it, and a template that raises on an unrecognized block turns a
+recoverable turn into a dead session — the request fails, the block stays in history,
+and every retry raises again. That is the same permanence as the validator bug, one
+layer down. It is exactly the failure in Claude Code
+[#77928](https://github.com/anthropics/claude-code/issues/77928):
+`jinja2 TemplateError: Unexpected item type in content`.
+
+`templates/claude-code-fable5.jinja` is a template built for this traffic. Its one
+structural rule is that **it never calls `raise_exception`** — unknown blocks render
+as readable text and the conversation continues.
+
+Check any template, including your own, with:
+
+```bash
+python3 tools/verify-template.py templates/claude-code-fable5.jinja
+```
+
+It renders the template against every shape Claude Code actually produces and reports
+two things separately, because they fail differently:
+
+- **hard failure** — `raise_exception` fired; the session cannot recover
+- **silent drop** — it rendered, but content the model was sent never reached it
+
+The second is the one that hides. Mid-conversation system messages are the usual
+casualty: a template that only merges `messages[0]` and `messages[1]` drops every
+later one, and the captured session carried **46 of them**.
+
+---
+
 ## Development
 
 ```bash
