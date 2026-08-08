@@ -412,6 +412,41 @@ which is why `count_tokens` is estimated and calibrated rather than computed exa
 
 ---
 
+## Upstream status
+
+Neither side has shipped a fix, and both trackers have open, unanswered reports. This
+is the evidence behind treating a local fix as the fix rather than a stopgap.
+
+**Anthropic / Claude Code**
+
+| Issue | What it reports | State |
+|---|---|---|
+| [#77928](https://github.com/anthropics/claude-code/issues/77928) | `tool_reference` injected into history breaks a third-party backend's template rendering — same mechanism, vLLM instead of LM Studio | open, no maintainer response |
+| [#64311](https://github.com/anthropics/claude-code/issues/64311) | tool-search deferral bypassed, schemas re-injected every turn | open, stale |
+| [#63436](https://github.com/anthropics/claude-code/issues/63436) | raw tool schemas forwarded, producing a 400 | closed, not planned |
+
+Nothing in that set is marked fixed.
+
+**LM Studio**
+
+| Issue | What it reports | State |
+|---|---|---|
+| [#1878](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1878) | "Only text tool_result blocks are supported…" with Claude Code | open |
+| [#1590](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1590) | 400 with an image attachment from Claude Code | open |
+| [#1755](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1755) | server 500 when the Messages API is called with image content | open |
+| [#2164](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/2164) | 0.4.19 Build 2 regression: `/v1/messages` tool calling breaks for Qwen models with custom thinking templates | open |
+| Discord thread | images in `tool_result`, "the entire conversation is bricked" | open |
+
+That last LM Studio issue is worth checking against your own setup — a Qwen-derived
+model with a custom Jinja thinking template is exactly its blast radius.
+
+One thing *was* fixed: Claude Code
+[#39906](https://github.com/anthropics/claude-code/issues/39906), "Cannot Handle API
+Requests >5 Minutes Long", is closed as completed. The client-side half of the
+long-request problem is handled; the keepalive here covers the gateway half.
+
+---
+
 ## Other things that break this setup
 
 The proxy fixes protocol mismatches. These are LM Studio settings, and it cannot fix
